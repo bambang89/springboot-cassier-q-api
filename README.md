@@ -1,41 +1,57 @@
 # cassier-Q API (Spring Boot)
 
-REST backend for the cassier-Q POS app, built independently from scratch
-(own schema, own endpoint contract) — a Spring Boot counterpart to the
-existing Go backend at `../../Cassier-Q`.
+REST backend for the cassier-Q POS app — a Spring Boot client of the **same
+SQL Server database** the sibling Go backend (`../../Cassier-Q`) already
+owns and manages. This project does not own the schema: `stores`, `users`,
+`roles`, `products`, `sales_transactions`, and 25+ other tables already
+exist there, seeded with real store/employee/role data. We only ever read
+that schema and additively migrate two tables of our own (`refresh_tokens`,
+`password_reset_tokens`) for JWT auth — see "Auth model" below.
+
+**Migration status:** only the **Auth** module (register/login/me/change
+password/forgot password/reset password) has been ported onto the real
+schema so far. Catalog (products/categories), Sales (orders), and Reports
+are not — their old code (built against a different, self-owned schema)
+has been moved out to [`deferred-phase2/`](deferred-phase2/) at the repo
+root (not compiled) until they're remapped onto `products`,
+`sales_transactions`, `sales_transaction_items`, `payments`, `inventories`,
+etc. See "What's deliberately out of scope" below.
 
 ## Tech stack
 
 | Concern        | Choice                                                              |
 |-----------------|------------------------------------------------------------------------|
 | Framework       | Spring Boot 4.1 (Spring Framework 7, Java 17)                        |
-| Database        | PostgreSQL 16, via `spring-boot-docker-compose` (auto-starts `compose.yaml` locally) |
-| Schema          | Flyway (`src/main/resources/db/migration`) — Hibernate is `ddl-auto: validate` only |
+| Database        | SQL Server (Azure SQL Edge locally), **pre-existing external instance** — not managed by this project, no docker-compose auto-start |
+| Schema          | Owned by the Go backend; Flyway (`src/main/resources/db/migration`) only baselines it and additively migrates our own auth tables. Hibernate is `ddl-auto: validate` only |
 | ORM             | Spring Data JPA / Hibernate                                          |
-| Auth            | Stateless JWT access tokens (HS384, 15 min) + opaque, hashed-at-rest refresh tokens (30 days, rotated on use) |
+| Auth            | Stateless JWT access tokens (HS384, 15 min) + opaque, hashed-at-rest refresh tokens (30 days, rotated on use); roles come from the real `roles`/`user_roles` RBAC tables |
 | API docs        | springdoc-openapi + Swagger UI                                       |
 | Validation      | Jakarta Bean Validation                                              |
 | Build           | Maven (`./mvnw`)                                                     |
 
 ## Getting started
 
-Prerequisites: JDK 17+, Docker (for the bundled Postgres — no manual setup
-needed, Spring Boot starts/stops `compose.yaml` automatically around the app
-lifecycle).
+Prerequisites: JDK 17+, and a **running SQL Server instance** reachable at
+the configured `DATABASE_URL` (locally: Azure SQL Edge in Docker, container
+name `azuresqledge`, `127.0.0.1:1433`, database `cassierQ`) — this project
+does **not** start that container for you; start/attach to it yourself
+before running.
 
 ```bash
 ./mvnw spring-boot:run
 ```
 
-That's it for local dev — no `.env` file, no manual `docker compose up`.
-On boot: Postgres container starts → Flyway migrates the schema → app
-listens on `:8080`.
+On boot: Flyway baselines the existing schema as version 1 (no-op — it's
+already there) → applies our own `V2__...` migration (creates
+`refresh_tokens`/`password_reset_tokens` if missing) → app listens on
+`:8080`.
 
 - Swagger UI: http://localhost:8080/swagger-ui.html
 - OpenAPI JSON: http://localhost:8080/v3/api-docs
 - Health: http://localhost:8080/actuator/health
 
-Run the test suite (also spins up Postgres via `compose.yaml`):
+Run the test suite:
 
 ```bash
 ./mvnw test
@@ -47,7 +63,7 @@ All configurable via env vars (see `application.yml` for defaults):
 
 | Variable | Purpose | Local default |
 |---|---|---|
-| `DATABASE_URL` / `DATABASE_USERNAME` / `DATABASE_PASSWORD` | Postgres connection | points at the bundled `compose.yaml` Postgres |
+| `DATABASE_URL` / `DATABASE_USERNAME` / `DATABASE_PASSWORD` | SQL Server connection | `jdbc:sqlserver://127.0.0.1:1433;databaseName=cassierQ;encrypt=true;trustServerCertificate=true` / `sa` / (see `application.yml`) — dev-only credentials, override for any real deployment |
 | `JWT_SECRET` | HMAC signing key for access tokens (**must** be ≥32 bytes; generate with `openssl rand -base64 64`) | insecure dev default — override in any real deployment |
 | `JWT_ACCESS_TTL_MINUTES` | Access token lifetime | 15 |
 | `JWT_REFRESH_TTL_DAYS` | Refresh token lifetime | 30 |
@@ -56,80 +72,93 @@ All configurable via env vars (see `application.yml` for defaults):
 | `PORT` | HTTP port | 8080 |
 
 Run with `--spring.profiles.active=prod` (or `SPRING_PROFILES_ACTIVE=prod`)
-in any real environment — this disables the docker-compose auto-management
-(`application-prod.yml`) and expects `DATABASE_URL`/`JWT_SECRET` to be
-supplied externally.
+in any real environment (`application-prod.yml`) — expects
+`DATABASE_URL`/`JWT_SECRET` to be supplied externally.
 
 ## Auth model
 
-- `POST /api/v1/auth/register` — creates a new **store** plus its **owner**
-  user in one transaction (email/password only, like the mobile app's
-  registration form).
-- `POST /api/v1/auth/login` — email + password → access token + refresh token.
+The real schema's RBAC: a `User` (login: `username` + `password_hash`,
+`is_superadmin` flag) maps 1:1 to an `Employee` (the person), and gets zero
+or more `UserRole` grants — each a `Role` (`role_code` like `SUPERADMIN`,
+`KEPALA_TOKO`, `PRODUCT`, `GUDANG`, `KASIR`), optionally scoped to a
+`Store` (`store == null` means the grant applies everywhere, e.g.
+SUPERADMIN). JWT authorities are `ROLE_<role_code>` per grant, plus
+`ROLE_SUPERADMIN` when `is_superadmin` is set.
+
+- `POST /api/v1/auth/register` — creates a new **store** plus a
+  **KEPALA_TOKO** (store head) account in one transaction — the closest
+  equivalent, in this RBAC model, of the old single-role "owner" concept.
+  Also creates the mandatory 1:1 `Employee` row (`employee_code` = the
+  chosen username, since none is collected separately here).
+- `POST /api/v1/auth/login` — **username** + password → access token +
+  refresh token. (Not email — `email` is nullable in the real schema;
+  `username` is the real unique login identifier, e.g. `kepala.str001`.)
 - `POST /api/v1/auth/refresh` — exchanges a refresh token for a new access
   token; the old refresh token is revoked (rotation), so a stolen-and-reused
   refresh token invalidates the whole chain the next time the legitimate
   client tries to use it.
 - `POST /api/v1/auth/logout` — revokes a refresh token.
-- `GET /api/v1/auth/me` — current user profile (requires `Authorization: Bearer <accessToken>`).
+- `GET /api/v1/auth/me` — current user profile + role grants (requires
+  `Authorization: Bearer <accessToken>`).
 - `POST /api/v1/auth/change-password` — authenticated user changes their own
   password (must supply the current one). Revokes all of that user's refresh
   tokens, so other devices are signed out.
 - `POST /api/v1/auth/forgot-password` — starts the reset flow: issues a
   one-time token (30 min TTL, configurable via `PASSWORD_RESET_TTL_MINUTES`)
-  if the email is registered. Always responds the same way regardless, so it
-  can't be used to enumerate accounts. **No real email provider is wired in**
-  — `LoggingPasswordResetMailSender` just logs the token; swap in a real
-  `PasswordResetMailSender` (SES/SendGrid/Postmark/...) before relying on
-  this outside local dev.
+  if the **username** is registered. Always responds the same way
+  regardless, so it can't be used to enumerate accounts. **No real email
+  provider is wired in** — `LoggingPasswordResetMailSender` just logs the
+  token; swap in a real `PasswordResetMailSender` (SES/SendGrid/Postmark/...)
+  before relying on this outside local dev.
 - `POST /api/v1/auth/reset-password` — exchanges that token for a new
   password. One-time use; also revokes all of that user's refresh tokens.
 
-Access tokens are self-contained JWTs (claims: `sub`=userId, `storeId`,
-`email`, `role`) validated without a DB round trip per request — see
-`JwtAuthenticationFilter`. Refresh tokens are opaque random strings; only
-their SHA-256 hash is stored (`refresh_tokens.token_hash`), so a leaked DB
-row can't be replayed as a live token.
+Access tokens are self-contained JWTs (claims: `sub`=userId, `username`,
+`email`, `superadmin`, `roles`=`"CODE:storeUuid,CODE2:,..."`) validated
+without a DB round trip per request — see `JwtAuthenticationFilter`.
+Refresh tokens are opaque random strings; only their SHA-256 hash is stored
+(`refresh_tokens.token_hash`), so a leaked DB row can't be replayed as a
+live token.
 
-Every other endpoint is store-scoped: the JWT's `storeId` claim is used to
-filter all queries, so one login can never see another store's data.
-Product/category writes are further restricted to `ROLE_OWNER` via
-`@PreAuthorize`.
+Store-scoping enforcement (filtering queries by a role grant's `storeId`)
+isn't implemented yet — there's nothing to scope until Catalog/Sales come
+back in phase 2.
 
 ## Endpoints
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| POST | `/api/v1/auth/register` | public | creates store + owner |
-| POST | `/api/v1/auth/login` | public | |
+| POST | `/api/v1/auth/register` | public | creates store + KEPALA_TOKO account |
+| POST | `/api/v1/auth/login` | public | username + password |
 | POST | `/api/v1/auth/refresh` | public | rotates refresh token |
 | POST | `/api/v1/auth/logout` | public | revokes refresh token |
 | GET | `/api/v1/auth/me` | bearer | |
 | POST | `/api/v1/auth/change-password` | bearer | requires current password |
 | POST | `/api/v1/auth/forgot-password` | public | issues reset token (logged, not emailed — see Auth model) |
 | POST | `/api/v1/auth/reset-password` | public | one-time token → new password |
-| GET/POST | `/api/v1/categories` | bearer | |
-| DELETE | `/api/v1/categories/{id}` | bearer | |
-| GET | `/api/v1/products` | bearer | paginated, `?search=` |
-| GET | `/api/v1/products/barcode/{barcode}` | bearer | used by the mobile app's scanner |
-| POST/PUT/DELETE | `/api/v1/products/**` | bearer, owner only | |
-| POST | `/api/v1/orders` | bearer | decrements stock in the same transaction |
-| GET | `/api/v1/orders` | bearer | paginated history |
-| GET | `/api/v1/orders/{id}` | bearer | |
-| POST | `/api/v1/orders/{id}/void` | bearer | restocks items, PAID → CANCELLED |
-| GET | `/api/v1/reports/summary` | bearer | `?from=&to=` (ISO date, default last 7 days): gross sales, order counts, top 5 best sellers |
+
+Catalog/Sales/Report endpoints (`/api/v1/categories`, `/api/v1/products`,
+`/api/v1/orders`, `/api/v1/reports/**`) are **not currently mounted** — see
+"Migration status" above.
 
 Full request/response shapes are in Swagger UI.
 
 ## What's deliberately out of scope
 
-Kept lean per the initial ask (DB connection, JWT, JPA, Swagger, and "what
-else is needed" — not a full feature-complete backend):
-
-- No employee/cashier account management endpoint yet (register always
-  creates an `OWNER`; adding a `CASHIER` requires an owner-only "invite
-  employee" endpoint, not yet built).
-- No customer CRUD endpoints (the `customers` table/entity exists and
-  orders can reference one, but there's no controller for it yet).
+- **Catalog, Sales, Report modules** — moved to `deferred-phase2/` (not
+  compiled). They were built against this project's own old schema
+  (`products`, `orders`, `customers`, ...), which no longer exists now that
+  we point at the real database. Porting them means remapping onto
+  `products`/`product_categories`/`product_prices`, `sales_transactions`/
+  `sales_transaction_items`/`payments`/`cashier_sessions`,
+  `inventories`/`stock_movements`, etc. — a separate, larger piece of work.
+- **Store-scoped query filtering** — not implemented; nothing to scope
+  until phase 2.
+- **Permission-level authorization** (`permissions`/`role_permissions`
+  tables) — only role-code-level authorities (`ROLE_KASIR`, etc.) are
+  wired up; fine-grained permission checks aren't used anywhere yet.
+- **Account lockout** — `users.failed_login_count` exists in the schema but
+  isn't incremented on failed login; `last_login_at` **is** updated on
+  success.
 - No refresh-token cleanup job for expired/revoked rows (fine at small
   scale; add a scheduled sweep before it matters).

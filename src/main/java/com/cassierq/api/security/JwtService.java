@@ -11,11 +11,14 @@ import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Date;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import javax.crypto.SecretKey;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -36,9 +39,10 @@ public class JwtService {
         Instant expiry = now.plus(jwtProperties.accessTokenTtlMinutes(), ChronoUnit.MINUTES);
         return Jwts.builder()
                 .subject(principal.getUserId().toString())
-                .claim("storeId", principal.getStoreId().toString())
+                .claim("username", principal.getUsername())
                 .claim("email", principal.getEmail())
-                .claim("role", principal.getRole().name())
+                .claim("superadmin", principal.isSuperadmin())
+                .claim("roles", encodeRoleGrants(principal.getRoleGrants()))
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(expiry))
                 .signWith(signingKey())
@@ -54,12 +58,36 @@ public class JwtService {
                     .getPayload();
             return Optional.of(new AccessTokenClaims(
                     UUID.fromString(claims.getSubject()),
-                    UUID.fromString(claims.get("storeId", String.class)),
+                    claims.get("username", String.class),
                     claims.get("email", String.class),
-                    claims.get("role", String.class)));
+                    Boolean.TRUE.equals(claims.get("superadmin", Boolean.class)),
+                    decodeRoleGrants(claims.get("roles", String.class))));
         } catch (JwtException | IllegalArgumentException e) {
             return Optional.empty();
         }
+    }
+
+    // "ROLE_CODE:storeUuid,ROLE_CODE2:" (empty storeUuid = not store-scoped) —
+    // plain delimited string rather than a nested JSON claim, so it round-trips
+    // the same way regardless of which JSON provider jjwt is configured with.
+    private String encodeRoleGrants(List<RoleGrant> grants) {
+        return grants.stream()
+                .map(g -> g.roleCode() + ":" + (g.storeId() == null ? "" : g.storeId()))
+                .collect(Collectors.joining(","));
+    }
+
+    private List<RoleGrant> decodeRoleGrants(String encoded) {
+        if (encoded == null || encoded.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(encoded.split(","))
+                .filter(s -> !s.isBlank())
+                .map(s -> {
+                    String[] parts = s.split(":", 2);
+                    UUID storeId = (parts.length > 1 && !parts[1].isEmpty()) ? UUID.fromString(parts[1]) : null;
+                    return new RoleGrant(parts[0], storeId);
+                })
+                .toList();
     }
 
     /** Opaque, high-entropy refresh token — never a JWT, so it can't be inspected/forged client-side. */
@@ -93,6 +121,6 @@ public class JwtService {
         }
     }
 
-    public record AccessTokenClaims(UUID userId, UUID storeId, String email, String role) {
+    public record AccessTokenClaims(UUID userId, String username, String email, boolean superadmin, List<RoleGrant> roleGrants) {
     }
 }

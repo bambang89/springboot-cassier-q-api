@@ -1,6 +1,5 @@
 package com.cassierq.api.security;
 
-import com.cassierq.api.domain.entity.UserRole;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -40,7 +39,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String token = header.substring(BEARER_PREFIX.length());
             Optional<JwtService.AccessTokenClaims> claims = jwtService.parseAccessToken(token);
             claims.ifPresent(c -> {
-                AppUserPrincipal principal = new AppUserPrincipal(c.userId(), c.storeId(), c.email(), UserRole.valueOf(c.role()));
+                AppUserPrincipal principal = new AppUserPrincipal(
+                        c.userId(), c.username(), c.email(), c.superadmin(), true, c.roleGrants());
                 var authentication = new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities());
                 authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                 SecurityContextHolder.getContext().setAuthentication(authentication);

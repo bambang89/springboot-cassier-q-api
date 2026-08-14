@@ -17,36 +17,27 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/**
- * Maps to the pre-existing `user_roles` join table: grants a {@link User} a
- * {@link Role}, optionally scoped to one {@link Store} ({@code store == null}
- * means the grant is store-independent, e.g. SUPERADMIN). Only has
- * {@code created_at} (no {@code updated_at}).
- */
+/** Maps to the pre-existing `role_permissions` join table (only has {@code created_at}, no {@code updated_at}). */
 @Entity
-@Table(name = "user_roles")
+@Table(name = "role_permissions")
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class UserRole {
+public class RolePermission {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "user_id", nullable = false)
-    private User user;
-
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "role_id", nullable = false)
     private Role role;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "store_id")
-    private Store store;
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "permission_id", nullable = false)
+    private Permission permission;
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;

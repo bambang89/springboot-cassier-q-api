@@ -2,6 +2,7 @@ package com.cassierq.api.security;
 
 import com.cassierq.api.domain.entity.User;
 import com.cassierq.api.domain.entity.UserRole;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
@@ -14,33 +15,52 @@ import org.springframework.security.core.userdetails.UserDetails;
 public class AppUserPrincipal implements UserDetails {
 
     private final UUID userId;
-    private final UUID storeId;
+    private final String username;
     private final String email;
     private final String passwordHash;
-    private final UserRole role;
+    private final boolean superadmin;
     private final boolean active;
+    private final List<RoleGrant> roleGrants;
 
-    public AppUserPrincipal(User user) {
+    public AppUserPrincipal(User user, List<RoleGrant> roleGrants) {
         this.userId = user.getId();
-        this.storeId = user.getStore().getId();
+        this.username = user.getUsername();
         this.email = user.getEmail();
         this.passwordHash = user.getPasswordHash();
-        this.role = user.getRole();
+        this.superadmin = user.isSuperadmin();
         this.active = user.isActive();
+        this.roleGrants = roleGrants;
     }
 
-    public AppUserPrincipal(UUID userId, UUID storeId, String email, UserRole role) {
+    /** Rebuilds the principal straight from JWT claims — no DB round trip per request. */
+    public AppUserPrincipal(UUID userId, String username, String email, boolean superadmin, boolean active, List<RoleGrant> roleGrants) {
         this.userId = userId;
-        this.storeId = storeId;
+        this.username = username;
         this.email = email;
         this.passwordHash = null;
-        this.role = role;
-        this.active = true;
+        this.superadmin = superadmin;
+        this.active = active;
+        this.roleGrants = roleGrants;
+    }
+
+    /** Builds a principal from a loaded {@link User} plus their {@code user_roles} rows (role + store already fetched). */
+    public static AppUserPrincipal of(User user, List<UserRole> userRoles) {
+        List<RoleGrant> grants = userRoles.stream()
+                .map(ur -> new RoleGrant(
+                        ur.getRole().getRoleCode(),
+                        ur.getStore() != null ? ur.getStore().getId() : null))
+                .toList();
+        return new AppUserPrincipal(user, grants);
     }
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        return List.of(new SimpleGrantedAuthority("ROLE_" + role.name()));
+        List<GrantedAuthority> authorities = new ArrayList<>();
+        if (superadmin) {
+            authorities.add(new SimpleGrantedAuthority("ROLE_SUPERADMIN"));
+        }
+        roleGrants.forEach(grant -> authorities.add(new SimpleGrantedAuthority("ROLE_" + grant.roleCode())));
+        return authorities;
     }
 
     @Override
@@ -50,7 +70,7 @@ public class AppUserPrincipal implements UserDetails {
 
     @Override
     public String getUsername() {
-        return email;
+        return username;
     }
 
     @Override
