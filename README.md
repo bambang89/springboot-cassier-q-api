@@ -51,6 +51,7 @@ All configurable via env vars (see `application.yml` for defaults):
 | `JWT_SECRET` | HMAC signing key for access tokens (**must** be ≥32 bytes; generate with `openssl rand -base64 64`) | insecure dev default — override in any real deployment |
 | `JWT_ACCESS_TTL_MINUTES` | Access token lifetime | 15 |
 | `JWT_REFRESH_TTL_DAYS` | Refresh token lifetime | 30 |
+| `PASSWORD_RESET_TTL_MINUTES` | Password reset token lifetime | 30 |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated origins allowed to call the API (mobile app dev servers, etc.) | localhost Expo dev ports |
 | `PORT` | HTTP port | 8080 |
 
@@ -71,6 +72,18 @@ supplied externally.
   client tries to use it.
 - `POST /api/v1/auth/logout` — revokes a refresh token.
 - `GET /api/v1/auth/me` — current user profile (requires `Authorization: Bearer <accessToken>`).
+- `POST /api/v1/auth/change-password` — authenticated user changes their own
+  password (must supply the current one). Revokes all of that user's refresh
+  tokens, so other devices are signed out.
+- `POST /api/v1/auth/forgot-password` — starts the reset flow: issues a
+  one-time token (30 min TTL, configurable via `PASSWORD_RESET_TTL_MINUTES`)
+  if the email is registered. Always responds the same way regardless, so it
+  can't be used to enumerate accounts. **No real email provider is wired in**
+  — `LoggingPasswordResetMailSender` just logs the token; swap in a real
+  `PasswordResetMailSender` (SES/SendGrid/Postmark/...) before relying on
+  this outside local dev.
+- `POST /api/v1/auth/reset-password` — exchanges that token for a new
+  password. One-time use; also revokes all of that user's refresh tokens.
 
 Access tokens are self-contained JWTs (claims: `sub`=userId, `storeId`,
 `email`, `role`) validated without a DB round trip per request — see
@@ -92,6 +105,9 @@ Product/category writes are further restricted to `ROLE_OWNER` via
 | POST | `/api/v1/auth/refresh` | public | rotates refresh token |
 | POST | `/api/v1/auth/logout` | public | revokes refresh token |
 | GET | `/api/v1/auth/me` | bearer | |
+| POST | `/api/v1/auth/change-password` | bearer | requires current password |
+| POST | `/api/v1/auth/forgot-password` | public | issues reset token (logged, not emailed — see Auth model) |
+| POST | `/api/v1/auth/reset-password` | public | one-time token → new password |
 | GET/POST | `/api/v1/categories` | bearer | |
 | DELETE | `/api/v1/categories/{id}` | bearer | |
 | GET | `/api/v1/products` | bearer | paginated, `?search=` |

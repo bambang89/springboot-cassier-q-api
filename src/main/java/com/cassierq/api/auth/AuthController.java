@@ -1,9 +1,12 @@
 package com.cassierq.api.auth;
 
 import com.cassierq.api.auth.dto.AuthResponse;
+import com.cassierq.api.auth.dto.ChangePasswordRequest;
+import com.cassierq.api.auth.dto.ForgotPasswordRequest;
 import com.cassierq.api.auth.dto.LoginRequest;
 import com.cassierq.api.auth.dto.RefreshRequest;
 import com.cassierq.api.auth.dto.RegisterRequest;
+import com.cassierq.api.auth.dto.ResetPasswordRequest;
 import com.cassierq.api.auth.dto.UserResponse;
 import com.cassierq.api.security.AppUserPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
@@ -58,5 +61,29 @@ public class AuthController {
     @Operation(summary = "Profil user yang sedang login")
     public UserResponse me(@AuthenticationPrincipal AppUserPrincipal principal) {
         return authService.me(principal.getUserId());
+    }
+
+    @PostMapping("/change-password")
+    @SecurityRequirement(name = "bearerAuth")
+    @Operation(summary = "Ganti kata sandi (mengetahui kata sandi saat ini)")
+    public ResponseEntity<Void> changePassword(
+            @AuthenticationPrincipal AppUserPrincipal principal,
+            @Valid @RequestBody ChangePasswordRequest request) {
+        authService.changePassword(principal.getUserId(), request);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/forgot-password")
+    @Operation(summary = "Minta token reset kata sandi (dikirim ke email jika terdaftar)")
+    public ResponseEntity<Void> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+        authService.forgotPassword(request);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/reset-password")
+    @Operation(summary = "Tukar token reset dengan kata sandi baru")
+    public ResponseEntity<Void> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+        authService.resetPassword(request);
+        return ResponseEntity.noContent().build();
     }
 }

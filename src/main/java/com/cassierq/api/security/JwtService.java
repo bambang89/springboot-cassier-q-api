@@ -64,6 +64,15 @@ public class JwtService {
 
     /** Opaque, high-entropy refresh token — never a JWT, so it can't be inspected/forged client-side. */
     public String generateRefreshTokenValue() {
+        return generateOpaqueToken();
+    }
+
+    /**
+     * High-entropy random token, base64url-encoded. Shared by refresh tokens
+     * and password reset tokens — both are bearer secrets handed to the
+     * client and only ever stored server-side as a hash (see {@link #hashToken}).
+     */
+    public String generateOpaqueToken() {
         byte[] bytes = new byte[64];
         secureRandom.nextBytes(bytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);

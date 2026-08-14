@@ -28,8 +28,16 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 @RequiredArgsConstructor
 public class SecurityConfig {
 
+    // Deliberately NOT "/api/v1/auth/**" — /me and /change-password must stay
+    // behind the anyRequest().authenticated() fallback below, or an
+    // unauthenticated caller would 500 (null principal) instead of 401.
     private static final String[] PUBLIC_PATHS = {
-            "/api/v1/auth/**",
+            "/api/v1/auth/register",
+            "/api/v1/auth/login",
+            "/api/v1/auth/refresh",
+            "/api/v1/auth/logout",
+            "/api/v1/auth/forgot-password",
+            "/api/v1/auth/reset-password",
             "/swagger-ui/**",
             "/swagger-ui.html",
             "/v3/api-docs/**",
