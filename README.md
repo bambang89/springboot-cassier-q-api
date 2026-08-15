@@ -136,19 +136,42 @@ DB round trip per request is a deliberate trade-off: it's what makes
 token TTL could safely move from 15 minutes to **1 day**
 (`JWT_ACCESS_TTL_MINUTES`) — a revoke no longer has to wait out the TTL.
 
+**Every bearer-authenticated request must also send a matching
+`X-Device-Id` header**, checked in that same central filter. Missing header
+→ 401 `DEVICE_MISMATCH` ("Header X-Device-Id wajib diisi"); a header whose
+value isn't on file for that user in `devices` → 401 `DEVICE_MISMATCH`
+("Device ID tidak dikenali untuk akun ini"). This applies to *every*
+bearer-authenticated endpoint across every module (Catalog, Sales, Cashier
+Sessions, Reports, Inventory, and Auth's own `/me`, `/change-password`,
+`/logout-all`, `/revoke`) — not just Auth. The public endpoints
+(`register`/`login`/`refresh`/`logout`/`forgot-password`/`reset-password`)
+are exempt since they run before there's an authenticated principal to
+check a device against.
+
+**Practical consequence:** a client that never sends `X-Device-Id` at login
+(recording it in `devices`, see below) has nothing to match on every
+subsequent call — they'll be locked out of everything except the public
+auth endpoints. Always send `X-Device-Id` from login onward.
+
 Refresh tokens are separate: opaque random strings, only their SHA-256 hash
 stored (`refresh_tokens.token_hash`), so a leaked DB row can't be replayed
 as a live token. `logout-all`/`revoke` clear `user_sessions`,
 `refresh_tokens`, **and** `devices` (below) for the target user.
 
-**Devices:** `register`/`login` require a `deviceType` (`ANDROID`/`IOS`/
-`WEB`); `refresh` accepts it optionally. Each (user, deviceType) upserts one
-row in `devices` holding that platform's current access token — a second
-`ANDROID` login updates the existing row, it doesn't add one. **The token is
-stored as given, unhashed** — a deliberate product decision, unlike every
-other token table in this project; treat a `devices` row as a live
-credential (it's usable until the access token's own ≤1-day expiry, same as
-stealing the JWT directly).
+**Devices:** four **headers**, all optional, read on `register`/`login`/
+`refresh` (never body fields): `X-Device-Id`, `X-Device-OS`,
+`X-App-Version`, `X-Device-Type` (must be `ANDROID`/`IOS`/`WEB` when sent —
+400 otherwise). Each upserts one `devices` row — keyed by `X-Device-Id` when
+present (the precise per-physical-device key), falling back to
+`X-Device-Type` otherwise (coarser: a second device of the same platform
+without an id overwrites the first). A header omitted on a given call
+leaves that column as whatever was recorded before (partial update — it
+doesn't get wiped to null). **The token is stored as given, unhashed** — a
+deliberate product decision, unlike every other token table in this
+project; treat a `devices` row as a live credential (it's usable until the
+access token's own ≤1-day expiry, same as stealing the JWT directly). See
+above for how `X-Device-Id` also gates every *other* authenticated
+endpoint.
 
 **Store scoping:** every store-scoped endpoint below acts on
 `principal.getPrimaryStoreId()` — the first store-scoped role grant found
