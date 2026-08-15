@@ -2,13 +2,9 @@ package com.cassierq.api.auth.dto;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
-/**
- * Creates a new store plus its KEPALA_TOKO (store head) account in one
- * transaction — the closest equivalent, in the real RBAC schema, of the
- * original "register creates a store + its owner" flow.
- */
 public record RegisterRequest(
         @NotBlank(message = "Kode toko wajib diisi")
         @Size(max = 20)
@@ -32,5 +28,9 @@ public record RegisterRequest(
 
         @NotBlank(message = "Kata sandi wajib diisi")
         @Size(min = 8, message = "Kata sandi minimal 8 karakter")
-        String password) {
+        String password,
+
+        @NotBlank(message = "Tipe device wajib diisi")
+        @Pattern(regexp = "ANDROID|IOS|WEB", message = "Tipe device harus ANDROID, IOS, atau WEB")
+        String deviceType) {
 }

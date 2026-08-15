@@ -138,8 +138,17 @@ token TTL could safely move from 15 minutes to **1 day**
 
 Refresh tokens are separate: opaque random strings, only their SHA-256 hash
 stored (`refresh_tokens.token_hash`), so a leaked DB row can't be replayed
-as a live token. `logout-all`/`revoke` clear both `user_sessions` and
-`refresh_tokens` for the target user.
+as a live token. `logout-all`/`revoke` clear `user_sessions`,
+`refresh_tokens`, **and** `devices` (below) for the target user.
+
+**Devices:** `register`/`login` require a `deviceType` (`ANDROID`/`IOS`/
+`WEB`); `refresh` accepts it optionally. Each (user, deviceType) upserts one
+row in `devices` holding that platform's current access token — a second
+`ANDROID` login updates the existing row, it doesn't add one. **The token is
+stored as given, unhashed** — a deliberate product decision, unlike every
+other token table in this project; treat a `devices` row as a live
+credential (it's usable until the access token's own ≤1-day expiry, same as
+stealing the JWT directly).
 
 **Store scoping:** every store-scoped endpoint below acts on
 `principal.getPrimaryStoreId()` — the first store-scoped role grant found

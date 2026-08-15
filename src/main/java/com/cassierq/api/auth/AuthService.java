@@ -13,6 +13,7 @@ import com.cassierq.api.common.exception.ConflictException;
 import com.cassierq.api.common.exception.ResourceNotFoundException;
 import com.cassierq.api.config.JwtProperties;
 import com.cassierq.api.config.PasswordResetProperties;
+import com.cassierq.api.domain.entity.Device;
 import com.cassierq.api.domain.entity.Employee;
 import com.cassierq.api.domain.entity.NumberSequence;
 import com.cassierq.api.domain.entity.PasswordResetToken;
@@ -22,6 +23,7 @@ import com.cassierq.api.domain.entity.Store;
 import com.cassierq.api.domain.entity.User;
 import com.cassierq.api.domain.entity.UserRole;
 import com.cassierq.api.domain.entity.UserSession;
+import com.cassierq.api.domain.repository.DeviceRepository;
 import com.cassierq.api.domain.repository.EmployeeRepository;
 import com.cassierq.api.domain.repository.NumberSequenceRepository;
 import com.cassierq.api.domain.repository.PasswordResetTokenRepository;
@@ -64,6 +66,7 @@ public class AuthService {
     private final NumberSequenceRepository numberSequenceRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final UserSessionRepository userSessionRepository;
+    private final DeviceRepository deviceRepository;
     private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final PasswordResetMailSender passwordResetMailSender;
     private final PasswordEncoder passwordEncoder;
@@ -115,7 +118,7 @@ public class AuthService {
                 .createdAt(Instant.now())
                 .build());
 
-        return issueTokens(user);
+        return issueTokens(user, request.deviceType());
     }
 
     @Transactional
@@ -129,7 +132,7 @@ public class AuthService {
         user.setLastLoginAt(Instant.now());
         userRepository.save(user);
 
-        return issueTokens(user);
+        return issueTokens(user, request.deviceType());
     }
 
     @Transactional
@@ -143,7 +146,7 @@ public class AuthService {
         stored.setRevoked(true);
         refreshTokenRepository.save(stored);
 
-        return issueTokens(stored.getUser());
+        return issueTokens(stored.getUser(), request.deviceType());
     }
 
     @Transactional
@@ -159,6 +162,7 @@ public class AuthService {
     public void logoutAllDevices(UUID userId) {
         userSessionRepository.revokeAllByUserId(userId);
         refreshTokenRepository.revokeAllByUserId(userId);
+        deviceRepository.deleteAllByUserId(userId);
     }
 
     @Transactional
@@ -175,6 +179,7 @@ public class AuthService {
 
         userSessionRepository.revokeAllByUserId(targetUserId);
         refreshTokenRepository.revokeAllByUserId(targetUserId);
+        deviceRepository.deleteAllByUserId(targetUserId);
     }
 
     @Transactional(readOnly = true)
@@ -246,7 +251,7 @@ public class AuthService {
                 .build()));
     }
 
-    private AuthResponse issueTokens(User user) {
+    private AuthResponse issueTokens(User user, String deviceType) {
         List<UserRole> userRoles = userRoleRepository.findAllByUserIdFetchingRole(user.getId());
         AppUserPrincipal principal = AppUserPrincipal.of(user, userRoles);
 
@@ -268,7 +273,22 @@ public class AuthService {
                 .expiresAt(jwtService.refreshTokenExpiry())
                 .build());
 
-        long expiresInSeconds = jwtProperties.accessTokenTtlMinutes() * 60;
-        return new AuthResponse(accessToken, rawRefreshToken, expiresInSeconds, UserResponse.from(user, userRoles));
+        if (deviceType != null) {
+            recordDevice(user, deviceType, accessToken);
+        }
+
+        return new AuthResponse(accessToken, rawRefreshToken, expiry.toEpochMilli(), UserResponse.from(user, userRoles));
+    }
+
+    /** Upserts the (user, deviceType) row with the freshly issued access token — one row per platform, not one per login. */
+    private void recordDevice(User user, String deviceType, String accessToken) {
+        Device device = deviceRepository.findByUserIdAndDeviceType(user.getId(), deviceType)
+                .orElseGet(() -> Device.builder()
+                        .user(user)
+                        .employee(user.getEmployee())
+                        .deviceType(deviceType)
+                        .build());
+        device.setToken(accessToken);
+        deviceRepository.save(device);
     }
 }
