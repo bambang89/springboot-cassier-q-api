@@ -9,13 +9,13 @@ ever read that schema and additively migrate two tables of our own
 (`refresh_tokens`, `password_reset_tokens`) for JWT auth — see "Auth model"
 below.
 
-**Migration status:** Auth, Catalog, Cashier Sessions, Sales, Reports,
-Employees, Purchase Orders/Suppliers, and Customers/Credit are ported onto
-the real schema (see their sections below). **Not** ported: Stock
-Transfers, Stock Opname, Discount Rules, Audit Logs, Store Settings — real
-tables exist for all of these, none are wired up yet. The old
-self-owned-schema code from before this project pointed at the real
-database is retired to [`deferred-phase2/`](deferred-phase2/) (not
+**Migration status:** Auth, Catalog (+ Units), Store Profile, Cashier
+Sessions, Sales (+ receipts), Reports, Employees, Purchase Orders/Suppliers,
+and Customers/Credit are ported onto the real schema (see their sections
+below). **Not** ported: Stock Transfers, Stock Opname, Discount Rules,
+Audit Logs — real tables exist for all of these, none are wired up yet.
+The old self-owned-schema code from before this project pointed at the
+real database is retired to [`deferred-phase2/`](deferred-phase2/) (not
 compiled) purely for reference; nothing there still applies now that the
 schema underneath changed this much.
 
@@ -185,19 +185,43 @@ Products are a **global** catalog (`products` has no `store_id`); price
 (`product_prices`) and stock (`inventories`) are **per-store**. Creating a
 product also creates its base-unit conversion, its initial price, and a
 zero-stock inventory row for the caller's store, all in one transaction.
-Category/Product writes require `PRODUCT` or `SUPERADMIN` role.
+Category/Product/Unit writes require `PRODUCT` or `SUPERADMIN` role.
+`GET /products?search=` matches name, SKU, barcode, or brand — one search
+box for however the cashier types it in (including scan-pasting a barcode).
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
+| GET / POST / PUT / DELETE | `/api/v1/units` | bearer / PRODUCT,SUPERADMIN | global (pcs, dus, kg, ...); DELETE is a hard delete — 409 if still referenced |
 | GET | `/api/v1/categories` | bearer | |
-| POST | `/api/v1/categories` | bearer, PRODUCT/SUPERADMIN | |
+| POST / PUT | `/api/v1/categories` | bearer, PRODUCT/SUPERADMIN | PUT rejects a category being its own parent |
 | DELETE | `/api/v1/categories/{id}` | bearer, PRODUCT/SUPERADMIN | 409 if products still reference it |
 | GET | `/api/v1/products` | bearer | paginated, `?search=`; price/stock scoped to caller's store |
 | GET | `/api/v1/products/barcode/{barcode}` | bearer | used by the mobile app's scanner |
-| POST | `/api/v1/products` | bearer, PRODUCT/SUPERADMIN | also creates price + zero stock for caller's store |
+| GET | `/api/v1/products/{id}/convert` | bearer | `?unitId=&quantity=` — converts to base units via `product_unit_conversions` (e.g. "3 DUS" → `quantityBaseUnit: 72`); 400 if that unit isn't registered for the product. Read-only preview of the same conversion Sales/Purchase Orders apply internally. |
+| POST | `/api/v1/products` | bearer, PRODUCT/SUPERADMIN | body includes optional `imageUrl`; also creates price + zero stock for caller's store |
 | PUT | `/api/v1/products/{id}` | bearer, PRODUCT/SUPERADMIN | a changed price closes the old `product_prices` row and opens a new one (history preserved) |
 | DELETE | `/api/v1/products/{id}` | bearer, PRODUCT/SUPERADMIN | soft delete (`deleted_at` + status `INACTIVE`) — past sales still reference the row |
 | POST | `/api/v1/products/{id}/restock` | bearer, SUPERADMIN/KEPALA_TOKO/GUDANG | body: `unitId`, `quantity`, `notes?`. Manual stock-in — creates the store's `inventories` row on first restock if the store never carried this product before. Always records a `STOCK_IN` stock_movements row. See Purchase Orders below for the formal, supplier-tracked way to add stock. |
+
+`products.image_url` (`nvarchar(500)`, nullable) is a column **we added**
+to the shared `products` table (`V8__products_image_url.sql`) — the one
+deliberate exception to only ever adding new tables, not new columns, to
+schema we don't own. Additive and nullable, so it doesn't affect the Go
+backend's existing reads/writes.
+
+## Store Profile
+
+`stores` (name/address/phone/...) is shared, real, already existed.
+`store_settings` (free-form per-store key/value config, already seeded
+with `TAX_RATE_PERCENT` for every real store) existed too but was
+completely unused until now — we reuse it for the extra profile fields
+`stores` doesn't have a column for (logo, description, receipt footer,
+...) instead of altering `stores` itself.
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/api/v1/store` | bearer | caller's store: `stores` fields + all `store_settings` as a `settings` map |
+| PUT | `/api/v1/store` | bearer, SUPERADMIN/KEPALA_TOKO | partial update — only fields sent change; `settings` is upserted key-by-key (keys not mentioned are left alone). Keys are free-form, e.g. `LOGO_URL`, `DESCRIPTION`, `RECEIPT_FOOTER`, `EMAIL`, `TAX_ID` |
 
 ## Employees
 
@@ -213,6 +237,7 @@ one transaction, provisioning nothing else (no new store, no
 | POST | `/api/v1/employees` | bearer, SUPERADMIN/KEPALA_TOKO | body: `name`, `username`, `email?`, `phone?`, `password`, `roleCode` (`KEPALA_TOKO`/`PRODUCT`/`GUDANG`/`KASIR`). Sets `must_change_password = true` — the owner picked this password, not the employee (not yet enforced at login, see "What's deliberately out of scope") |
 | GET | `/api/v1/employees` | bearer, SUPERADMIN/KEPALA_TOKO | everyone at the caller's store, including the caller |
 | GET | `/api/v1/employees/{id}` | bearer, SUPERADMIN/KEPALA_TOKO | |
+| PUT | `/api/v1/employees/{id}` | bearer, SUPERADMIN/KEPALA_TOKO | edits name/email/phone/`roleCode` — not username/password (see `/auth/change-password`). Changing `roleCode` deletes the old `UserRole` grant at this store and inserts the new one |
 | POST | `/api/v1/employees/{id}/deactivate` | bearer, SUPERADMIN/KEPALA_TOKO | `Employee.active` + `User.active` → false, and immediately kills their sessions/refresh tokens/devices (same as `/auth/revoke`) — they can't finish out their current 1-day access token. Can't deactivate yourself (400). |
 | POST | `/api/v1/employees/{id}/reactivate` | bearer, SUPERADMIN/KEPALA_TOKO | |
 
@@ -263,6 +288,7 @@ existing data's own format, e.g. `TRX-STR001-260810-000001`).
 | POST | `/api/v1/orders` | bearer | decrements stock + records payment in the same transaction |
 | GET | `/api/v1/orders` | bearer | paginated, newest first |
 | GET | `/api/v1/orders/{id}` | bearer | |
+| GET | `/api/v1/orders/{id}/receipt` | bearer | struk/nota: store name/address/phone, cashier, items, totals, payment method, change — plus `customerName`/`debtAmount` when it was a credit sale. Structured data, not tied to any printer format (ESC/POS, PDF, ...) — the client renders it |
 | POST | `/api/v1/orders/{id}/void` | bearer | body: `reason`; restocks items, PAID → VOID |
 
 Only single-method `CASH`/`CREDIT_CARD`/`DEBIT`/`TRANSFER`/`QRIS` payment
@@ -311,12 +337,11 @@ Full request/response shapes for every endpoint are in Swagger UI.
 
 ## What's deliberately out of scope
 
-- **Stock Transfers, Stock Opname, Discount Rules, Audit Logs, Store
-  Settings** — real tables exist for all of these, none are wired up: no
+- **Stock Transfers, Stock Opname, Discount Rules, Audit Logs** — real
+  tables exist for all of these, none are wired up: no
   transfer-between-stores, no periodic physical stock count reconciliation,
   no per-item/promo discount rules (only order-level `discountAmount`), no
-  audit trail of who changed what, no per-store config (tax rate, printer,
-  ...).
+  audit trail of who changed what.
 - **`must_change_password` isn't enforced** — set to `true` when
   `/api/v1/employees` creates an account, but login doesn't currently check
   or act on it.

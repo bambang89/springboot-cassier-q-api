@@ -2,6 +2,7 @@ package com.cassierq.api.catalog;
 
 import com.cassierq.api.catalog.dto.ProductRequest;
 import com.cassierq.api.catalog.dto.ProductResponse;
+import com.cassierq.api.catalog.dto.UnitConversionResponse;
 import com.cassierq.api.common.PageResponse;
 import com.cassierq.api.common.exception.BadRequestException;
 import com.cassierq.api.common.exception.ConflictException;
@@ -82,6 +83,7 @@ public class ProductService {
                 .category(category)
                 .brand(request.brand())
                 .description(request.description())
+                .imageUrl(request.imageUrl())
                 .baseUnit(baseUnit)
                 .status("ACTIVE")
                 .createdBy(creator)
@@ -140,12 +142,43 @@ public class ProductService {
         product.setCategory(category);
         product.setBrand(request.brand());
         product.setDescription(request.description());
+        product.setImageUrl(request.imageUrl());
         product.setBaseUnit(baseUnit);
         productRepository.save(product);
 
         updatePriceIfChanged(product, storeId, request.sellingPrice(), request.costPrice(), principal.getUserId());
 
         return toResponse(product, storeId);
+    }
+
+    /**
+     * Converts a quantity in some unit to base units for a product — e.g.
+     * "2 DUS of this product is how many PCS?". Same conversion factor
+     * lookup Sales/Purchase Orders use internally, exposed standalone so a
+     * client can preview it (e.g. show "= 24 pcs" while the cashier is
+     * still typing) without actually creating an order.
+     */
+    @Transactional(readOnly = true)
+    public UnitConversionResponse convert(UUID productId, UUID unitId, BigDecimal quantity) {
+        Product product = productRepository.findById(productId)
+                .filter(p -> p.getDeletedAt() == null)
+                .orElseThrow(() -> new ResourceNotFoundException("Produk tidak ditemukan"));
+        Unit unit = unitRepository.findById(unitId)
+                .orElseThrow(() -> new ResourceNotFoundException("Satuan tidak ditemukan"));
+        ProductUnitConversion conversion = conversionRepository.findByProductIdAndUnitId(productId, unitId)
+                .orElseThrow(() -> new BadRequestException("Satuan tersebut tidak berlaku untuk produk " + product.getProductName()));
+
+        BigDecimal quantityBaseUnit = quantity.multiply(conversion.getConversionToBase());
+
+        return new UnitConversionResponse(
+                product.getId(),
+                unit.getId(),
+                unit.getUnitName(),
+                quantity,
+                product.getBaseUnit().getId(),
+                product.getBaseUnit().getUnitName(),
+                conversion.getConversionToBase(),
+                quantityBaseUnit);
     }
 
     @Transactional

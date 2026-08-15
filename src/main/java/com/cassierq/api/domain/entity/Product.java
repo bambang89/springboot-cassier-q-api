@@ -53,6 +53,9 @@ public class Product extends Auditable {
     @Column(length = 1000)
     private String description;
 
+    @Column(name = "image_url", length = 500)
+    private String imageUrl;
+
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "base_unit_id", nullable = false)
     private Unit baseUnit;

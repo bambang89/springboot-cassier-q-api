@@ -2,12 +2,14 @@ package com.cassierq.api.catalog;
 
 import com.cassierq.api.catalog.dto.ProductRequest;
 import com.cassierq.api.catalog.dto.ProductResponse;
+import com.cassierq.api.catalog.dto.UnitConversionResponse;
 import com.cassierq.api.common.PageResponse;
 import com.cassierq.api.security.AppUserPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import java.math.BigDecimal;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
@@ -47,6 +49,15 @@ public class ProductController {
     @Operation(summary = "Cari produk berdasarkan barcode (dipakai scanner)")
     public ProductResponse getByBarcode(@AuthenticationPrincipal AppUserPrincipal principal, @PathVariable String barcode) {
         return productService.getByBarcode(barcode, principal.getPrimaryStoreId());
+    }
+
+    @GetMapping("/{id}/convert")
+    @Operation(summary = "Konversi jumlah dari satuan lain ke satuan dasar produk (mis. 2 DUS = berapa PCS)")
+    public UnitConversionResponse convert(
+            @PathVariable UUID id,
+            @RequestParam UUID unitId,
+            @RequestParam BigDecimal quantity) {
+        return productService.convert(id, unitId, quantity);
     }
 
     @PostMapping

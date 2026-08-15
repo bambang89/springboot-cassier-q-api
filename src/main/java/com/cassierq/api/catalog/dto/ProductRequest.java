@@ -28,6 +28,9 @@ public record ProductRequest(
         @Size(max = 500)
         String description,
 
+        @Size(max = 500)
+        String imageUrl,
+
         @NotNull(message = "Satuan dasar wajib dipilih")
         UUID baseUnitId,
 
