@@ -23,6 +23,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -32,24 +33,47 @@ import org.springframework.web.bind.annotation.RestController;
 @Tag(name = "Auth", description = "Registrasi toko, login, dan pengelolaan token")
 public class AuthController {
 
+    private static final String HEADER_DEVICE_ID = "X-Device-Id";
+    private static final String HEADER_DEVICE_OS = "X-Device-OS";
+    private static final String HEADER_APP_VERSION = "X-App-Version";
+    private static final String HEADER_DEVICE_TYPE = "X-Device-Type";
+
     private final AuthService authService;
 
     @PostMapping("/register")
     @Operation(summary = "Daftarkan toko baru beserta akun pemilik (owner)")
-    public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(authService.register(request));
+    public ResponseEntity<AuthResponse> register(
+            @Valid @RequestBody RegisterRequest request,
+            @RequestHeader(value = HEADER_DEVICE_ID, required = false) String deviceId,
+            @RequestHeader(value = HEADER_DEVICE_OS, required = false) String deviceOs,
+            @RequestHeader(value = HEADER_APP_VERSION, required = false) String appVersion,
+            @RequestHeader(value = HEADER_DEVICE_TYPE, required = false) String deviceType) {
+        var device = new DeviceContext(deviceId, deviceOs, appVersion, deviceType);
+        return ResponseEntity.status(HttpStatus.CREATED).body(authService.register(request, device));
     }
 
     @PostMapping("/login")
     @Operation(summary = "Masuk dengan username & kata sandi")
-    public AuthResponse login(@Valid @RequestBody LoginRequest request) {
-        return authService.login(request);
+    public AuthResponse login(
+            @Valid @RequestBody LoginRequest request,
+            @RequestHeader(value = HEADER_DEVICE_ID, required = false) String deviceId,
+            @RequestHeader(value = HEADER_DEVICE_OS, required = false) String deviceOs,
+            @RequestHeader(value = HEADER_APP_VERSION, required = false) String appVersion,
+            @RequestHeader(value = HEADER_DEVICE_TYPE, required = false) String deviceType) {
+        var device = new DeviceContext(deviceId, deviceOs, appVersion, deviceType);
+        return authService.login(request, device);
     }
 
     @PostMapping("/refresh")
     @Operation(summary = "Tukar refresh token dengan access token baru (refresh token lama otomatis dicabut)")
-    public AuthResponse refresh(@Valid @RequestBody RefreshRequest request) {
-        return authService.refresh(request);
+    public AuthResponse refresh(
+            @Valid @RequestBody RefreshRequest request,
+            @RequestHeader(value = HEADER_DEVICE_ID, required = false) String deviceId,
+            @RequestHeader(value = HEADER_DEVICE_OS, required = false) String deviceOs,
+            @RequestHeader(value = HEADER_APP_VERSION, required = false) String appVersion,
+            @RequestHeader(value = HEADER_DEVICE_TYPE, required = false) String deviceType) {
+        var device = new DeviceContext(deviceId, deviceOs, appVersion, deviceType);
+        return authService.refresh(request, device);
     }
 
     @PostMapping("/logout")

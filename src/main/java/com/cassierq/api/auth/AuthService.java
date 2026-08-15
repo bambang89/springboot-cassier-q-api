@@ -38,6 +38,7 @@ import com.cassierq.api.security.JwtService;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -76,7 +77,7 @@ public class AuthService {
     private final PasswordResetProperties passwordResetProperties;
 
     @Transactional
-    public AuthResponse register(RegisterRequest request) {
+    public AuthResponse register(RegisterRequest request, DeviceContext device) {
         if (userRepository.existsByUsernameIgnoreCase(request.username())) {
             throw new ConflictException("Username sudah terdaftar");
         }
@@ -118,11 +119,11 @@ public class AuthService {
                 .createdAt(Instant.now())
                 .build());
 
-        return issueTokens(user, request.deviceType());
+        return issueTokens(user, device);
     }
 
     @Transactional
-    public AuthResponse login(LoginRequest request) {
+    public AuthResponse login(LoginRequest request, DeviceContext device) {
         authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.username(), request.password()));
 
@@ -132,11 +133,11 @@ public class AuthService {
         user.setLastLoginAt(Instant.now());
         userRepository.save(user);
 
-        return issueTokens(user, request.deviceType());
+        return issueTokens(user, device);
     }
 
     @Transactional
-    public AuthResponse refresh(RefreshRequest request) {
+    public AuthResponse refresh(RefreshRequest request, DeviceContext device) {
         String hash = jwtService.hashToken(request.refreshToken());
         RefreshToken stored = refreshTokenRepository.findByTokenHash(hash)
                 .filter(rt -> !rt.isRevoked())
@@ -146,7 +147,7 @@ public class AuthService {
         stored.setRevoked(true);
         refreshTokenRepository.save(stored);
 
-        return issueTokens(stored.getUser(), request.deviceType());
+        return issueTokens(stored.getUser(), device);
     }
 
     @Transactional
@@ -251,7 +252,11 @@ public class AuthService {
                 .build()));
     }
 
-    private AuthResponse issueTokens(User user, String deviceType) {
+    private AuthResponse issueTokens(User user, DeviceContext device) {
+        if (!device.hasValidDeviceType()) {
+            throw new BadRequestException("Tipe device harus ANDROID, IOS, atau WEB");
+        }
+
         List<UserRole> userRoles = userRoleRepository.findAllByUserIdFetchingRole(user.getId());
         AppUserPrincipal principal = AppUserPrincipal.of(user, userRoles);
 
@@ -273,21 +278,43 @@ public class AuthService {
                 .expiresAt(jwtService.refreshTokenExpiry())
                 .build());
 
-        if (deviceType != null) {
-            recordDevice(user, deviceType, accessToken);
+        if (!device.isEmpty()) {
+            recordDevice(user, device, accessToken);
         }
 
         return new AuthResponse(accessToken, rawRefreshToken, expiry.toEpochMilli(), UserResponse.from(user, userRoles));
     }
 
-    /** Upserts the (user, deviceType) row with the freshly issued access token — one row per platform, not one per login. */
-    private void recordDevice(User user, String deviceType, String accessToken) {
-        Device device = deviceRepository.findByUserIdAndDeviceType(user.getId(), deviceType)
-                .orElseGet(() -> Device.builder()
-                        .user(user)
-                        .employee(user.getEmployee())
-                        .deviceType(deviceType)
-                        .build());
+    /**
+     * Upserts a `devices` row with the freshly issued access token — one row
+     * per physical device, not one per login. Keyed by {@code deviceId} when
+     * the client sends one (the precise identifier); falls back to
+     * {@code deviceType} otherwise (coarser — a second device of the same
+     * platform without an id overwrites the first).
+     */
+    private void recordDevice(User user, DeviceContext ctx, String accessToken) {
+        Optional<Device> existing = ctx.deviceId() != null
+                ? deviceRepository.findByUserIdAndDeviceId(user.getId(), ctx.deviceId())
+                : deviceRepository.findByUserIdAndDeviceType(user.getId(), ctx.deviceType());
+
+        Device device = existing.orElseGet(() -> Device.builder()
+                .user(user)
+                .employee(user.getEmployee())
+                .build());
+        // Partial update: a header the client didn't send this time keeps
+        // whatever was recorded before, instead of being wiped to null.
+        if (ctx.deviceId() != null) {
+            device.setDeviceId(ctx.deviceId());
+        }
+        if (ctx.deviceOs() != null) {
+            device.setDeviceOs(ctx.deviceOs());
+        }
+        if (ctx.appVersion() != null) {
+            device.setAppVersion(ctx.appVersion());
+        }
+        if (ctx.deviceType() != null) {
+            device.setDeviceType(ctx.deviceType());
+        }
         device.setToken(accessToken);
         deviceRepository.save(device);
     }

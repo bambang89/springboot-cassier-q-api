@@ -10,6 +10,8 @@ import org.springframework.data.jpa.repository.Query;
 
 public interface DeviceRepository extends JpaRepository<Device, UUID> {
 
+    Optional<Device> findByUserIdAndDeviceId(UUID userId, String deviceId);
+
     Optional<Device> findByUserIdAndDeviceType(UUID userId, String deviceType);
 
     List<Device> findByUserId(UUID userId);

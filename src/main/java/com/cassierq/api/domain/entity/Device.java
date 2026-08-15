@@ -38,7 +38,18 @@ public class Device extends Auditable {
     @JoinColumn(name = "employee_id", nullable = false)
     private Employee employee;
 
-    @Column(name = "device_type", nullable = false, length = 20)
+    // All four below are optional, client-supplied via headers (not body) —
+    // see AuthController. Default null when the client doesn't send them.
+    @Column(name = "device_id", length = 200)
+    private String deviceId;
+
+    @Column(name = "device_os", length = 100)
+    private String deviceOs;
+
+    @Column(name = "app_version", length = 50)
+    private String appVersion;
+
+    @Column(name = "device_type", length = 20)
     private String deviceType;
 
     @Lob

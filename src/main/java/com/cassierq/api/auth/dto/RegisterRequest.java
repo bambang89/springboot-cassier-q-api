@@ -2,7 +2,6 @@ package com.cassierq.api.auth.dto;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 public record RegisterRequest(
@@ -28,9 +27,5 @@ public record RegisterRequest(
 
         @NotBlank(message = "Kata sandi wajib diisi")
         @Size(min = 8, message = "Kata sandi minimal 8 karakter")
-        String password,
-
-        @NotBlank(message = "Tipe device wajib diisi")
-        @Pattern(regexp = "ANDROID|IOS|WEB", message = "Tipe device harus ANDROID, IOS, atau WEB")
-        String deviceType) {
+        String password) {
 }
