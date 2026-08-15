@@ -11,19 +11,19 @@ import jakarta.validation.constraints.Size;
  */
 public record RegisterRequest(
         @NotBlank(message = "Kode toko wajib diisi")
-        @Size(max = 40)
+        @Size(max = 20)
         String storeCode,
 
         @NotBlank(message = "Nama toko wajib diisi")
-        @Size(max = 300)
+        @Size(max = 150)
         String storeName,
 
         @NotBlank(message = "Username wajib diisi")
-        @Size(max = 100)
+        @Size(max = 50)
         String username,
 
         @NotBlank(message = "Nama wajib diisi")
-        @Size(max = 300)
+        @Size(max = 150)
         String name,
 
         @NotBlank(message = "Email wajib diisi")

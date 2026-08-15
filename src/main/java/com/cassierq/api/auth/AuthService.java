@@ -14,6 +14,7 @@ import com.cassierq.api.common.exception.ResourceNotFoundException;
 import com.cassierq.api.config.JwtProperties;
 import com.cassierq.api.config.PasswordResetProperties;
 import com.cassierq.api.domain.entity.Employee;
+import com.cassierq.api.domain.entity.NumberSequence;
 import com.cassierq.api.domain.entity.PasswordResetToken;
 import com.cassierq.api.domain.entity.RefreshToken;
 import com.cassierq.api.domain.entity.Role;
@@ -21,6 +22,7 @@ import com.cassierq.api.domain.entity.Store;
 import com.cassierq.api.domain.entity.User;
 import com.cassierq.api.domain.entity.UserRole;
 import com.cassierq.api.domain.repository.EmployeeRepository;
+import com.cassierq.api.domain.repository.NumberSequenceRepository;
 import com.cassierq.api.domain.repository.PasswordResetTokenRepository;
 import com.cassierq.api.domain.repository.RefreshTokenRepository;
 import com.cassierq.api.domain.repository.RoleRepository;
@@ -48,11 +50,21 @@ public class AuthService {
     // equivalent, in this RBAC schema, of the old single "OWNER" role.
     private static final String DEFAULT_REGISTER_ROLE_CODE = "KEPALA_TOKO";
 
+    // Same sequence types/prefixes the existing stores were seeded with —
+    // sales creation (and, later, stock opname/PO/transfer) needs a row here
+    // per store, and nothing else provisions it for a store this app creates.
+    private static final java.util.Map<String, String> DEFAULT_SEQUENCES = java.util.Map.of(
+            "SALES_TRANSACTION", "TRX",
+            "STOCK_OPNAME", "SO",
+            "PURCHASE_ORDER", "PO",
+            "STOCK_TRANSFER", "ST");
+
     private final UserRepository userRepository;
     private final EmployeeRepository employeeRepository;
     private final StoreRepository storeRepository;
     private final RoleRepository roleRepository;
     private final UserRoleRepository userRoleRepository;
+    private final NumberSequenceRepository numberSequenceRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final PasswordResetMailSender passwordResetMailSender;
@@ -76,6 +88,7 @@ public class AuthService {
                 .storeName(request.storeName())
                 .status("ACTIVE")
                 .build());
+        provisionNumberSequences(store);
 
         // Every login account maps 1:1 to an employee record in this schema;
         // the username doubles as the employee code since we don't collect one separately here.
@@ -210,6 +223,17 @@ public class AuthService {
         passwordResetTokenRepository.save(stored);
 
         refreshTokenRepository.revokeAllByUserId(user.getId());
+    }
+
+    private void provisionNumberSequences(Store store) {
+        Instant now = Instant.now();
+        DEFAULT_SEQUENCES.forEach((type, prefix) -> numberSequenceRepository.save(NumberSequence.builder()
+                .store(store)
+                .sequenceType(type)
+                .prefix(prefix)
+                .currentValue(0)
+                .updatedAt(now)
+                .build()));
     }
 
     private AuthResponse issueTokens(User user) {

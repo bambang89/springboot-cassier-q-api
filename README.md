@@ -3,19 +3,21 @@
 REST backend for the cassier-Q POS app — a Spring Boot client of the **same
 SQL Server database** the sibling Go backend (`../../Cassier-Q`) already
 owns and manages. This project does not own the schema: `stores`, `users`,
-`roles`, `products`, `sales_transactions`, and 25+ other tables already
-exist there, seeded with real store/employee/role data. We only ever read
-that schema and additively migrate two tables of our own (`refresh_tokens`,
-`password_reset_tokens`) for JWT auth — see "Auth model" below.
+`roles`, `products`, `sales_transactions`, and 20+ other tables already
+exist there, seeded with real store/employee/role/product data. We only
+ever read that schema and additively migrate two tables of our own
+(`refresh_tokens`, `password_reset_tokens`) for JWT auth — see "Auth model"
+below.
 
-**Migration status:** only the **Auth** module (register/login/me/change
-password/forgot password/reset password) has been ported onto the real
-schema so far. Catalog (products/categories), Sales (orders), and Reports
-are not — their old code (built against a different, self-owned schema)
-has been moved out to [`deferred-phase2/`](deferred-phase2/) at the repo
-root (not compiled) until they're remapped onto `products`,
-`sales_transactions`, `sales_transaction_items`, `payments`, `inventories`,
-etc. See "What's deliberately out of scope" below.
+**Migration status:** Auth (register/login/me/change password/forgot
+password/reset password), Catalog (categories/products/prices/stock),
+Cashier Sessions, Sales (orders), and Reports are ported onto the real
+schema. **Not** ported: Purchase Orders, Stock Transfers, Stock Opname,
+Suppliers, Discount Rules, Audit Logs, Store Settings — these weren't part
+of this app's original 4-menu scope (Catalog/Sales/Report) and the old
+self-owned-schema code for the parts that *were* is retired to
+[`deferred-phase2/`](deferred-phase2/) (not compiled) purely for reference;
+nothing there still applies now that the schema underneath changed this much.
 
 ## Tech stack
 
@@ -88,8 +90,10 @@ SUPERADMIN). JWT authorities are `ROLE_<role_code>` per grant, plus
 - `POST /api/v1/auth/register` — creates a new **store** plus a
   **KEPALA_TOKO** (store head) account in one transaction — the closest
   equivalent, in this RBAC model, of the old single-role "owner" concept.
-  Also creates the mandatory 1:1 `Employee` row (`employee_code` = the
-  chosen username, since none is collected separately here).
+  Also creates the mandatory 1:1 `Employee` row and provisions that store's
+  `number_sequences` rows (`SALES_TRANSACTION`/`TRX`, `STOCK_OPNAME`/`SO`,
+  `PURCHASE_ORDER`/`PO`, `STOCK_TRANSFER`/`ST`) — without those, sales can't
+  generate a transaction number at all.
 - `POST /api/v1/auth/login` — **username** + password → access token +
   refresh token. (Not email — `email` is nullable in the real schema;
   `username` is the real unique login identifier, e.g. `kepala.str001`.)
@@ -120,45 +124,96 @@ Refresh tokens are opaque random strings; only their SHA-256 hash is stored
 (`refresh_tokens.token_hash`), so a leaked DB row can't be replayed as a
 live token.
 
-Store-scoping enforcement (filtering queries by a role grant's `storeId`)
-isn't implemented yet — there's nothing to scope until Catalog/Sales come
-back in phase 2.
+**Store scoping:** every store-scoped endpoint below acts on
+`principal.getPrimaryStoreId()` — the first store-scoped role grant found
+for the caller. Users with grants at more than one store aren't fully
+supported yet (no store-selection endpoint/header); a pure SUPERADMIN with
+no store-level grant gets a 400 on any store-scoped call.
 
-## Endpoints
+## Catalog
+
+Products are a **global** catalog (`products` has no `store_id`); price
+(`product_prices`) and stock (`inventories`) are **per-store**. Creating a
+product also creates its base-unit conversion, its initial price, and a
+zero-stock inventory row for the caller's store, all in one transaction.
+Category/Product writes require `PRODUCT` or `SUPERADMIN` role.
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| POST | `/api/v1/auth/register` | public | creates store + KEPALA_TOKO account |
-| POST | `/api/v1/auth/login` | public | username + password |
-| POST | `/api/v1/auth/refresh` | public | rotates refresh token |
-| POST | `/api/v1/auth/logout` | public | revokes refresh token |
-| GET | `/api/v1/auth/me` | bearer | |
-| POST | `/api/v1/auth/change-password` | bearer | requires current password |
-| POST | `/api/v1/auth/forgot-password` | public | issues reset token (logged, not emailed — see Auth model) |
-| POST | `/api/v1/auth/reset-password` | public | one-time token → new password |
+| GET | `/api/v1/categories` | bearer | |
+| POST | `/api/v1/categories` | bearer, PRODUCT/SUPERADMIN | |
+| DELETE | `/api/v1/categories/{id}` | bearer, PRODUCT/SUPERADMIN | 409 if products still reference it |
+| GET | `/api/v1/products` | bearer | paginated, `?search=`; price/stock scoped to caller's store |
+| GET | `/api/v1/products/barcode/{barcode}` | bearer | used by the mobile app's scanner |
+| POST | `/api/v1/products` | bearer, PRODUCT/SUPERADMIN | also creates price + zero stock for caller's store |
+| PUT | `/api/v1/products/{id}` | bearer, PRODUCT/SUPERADMIN | a changed price closes the old `product_prices` row and opens a new one (history preserved) |
+| DELETE | `/api/v1/products/{id}` | bearer, PRODUCT/SUPERADMIN | soft delete (`deleted_at` + status `INACTIVE`) — past sales still reference the row |
+| POST | `/api/v1/products/{id}/restock` | bearer, SUPERADMIN/KEPALA_TOKO/GUDANG | body: `unitId`, `quantity`, `notes?`. Manual stock-in only — no Purchase Order flow (see "What's deliberately out of scope"); creates the store's `inventories` row on first restock if the store never carried this product before. Always records a `STOCK_IN` stock_movements row. |
 
-Catalog/Sales/Report endpoints (`/api/v1/categories`, `/api/v1/products`,
-`/api/v1/orders`, `/api/v1/reports/**`) are **not currently mounted** — see
-"Migration status" above.
+## Cashier Sessions
 
-Full request/response shapes are in Swagger UI.
+New concept, not in the old app — required because
+`sales_transactions.cashier_session_id` is `NOT NULL` in the real schema. A
+cashier opens a session (cash-drawer float) before ringing up any sale and
+closes it at end of shift; the DB enforces at most one `OPEN` session per
+cashier.
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| POST | `/api/v1/cashier-sessions/open` | bearer | body: `openingCash` |
+| POST | `/api/v1/cashier-sessions/{id}/close` | bearer | body: `actualCash`, `notes`; computes `expectedCash` = opening + cash sales in that session, `cashDifference` = actual − expected |
+| GET | `/api/v1/cashier-sessions/current` | bearer | the caller's open session, 404 if none |
+
+## Sales (Orders)
+
+`POST /api/v1/orders` requires an open cashier session. For each line: the
+product's current store price is used (never a client-supplied price), the
+requested unit is converted to base units via `product_unit_conversions`,
+stock is checked and decremented under a pessimistic row lock (concurrent
+sales of the same product can't oversell it), and a `stock_movements` audit
+row is written. `transaction_number` is generated from that store's
+`number_sequences` row: `{prefix}-{storeCode}-{yyMMdd}-{seq:6}` (matches the
+existing data's own format, e.g. `TRX-STR001-260810-000001`).
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| POST | `/api/v1/orders` | bearer | decrements stock + records payment in the same transaction |
+| GET | `/api/v1/orders` | bearer | paginated, newest first |
+| GET | `/api/v1/orders/{id}` | bearer | |
+| POST | `/api/v1/orders/{id}/void` | bearer | body: `reason`; restocks items, PAID → VOID |
+
+Only single, full-amount `CASH`/`CREDIT_CARD`/`DEBIT`/`TRANSFER`/`QRIS`
+payment per order is supported — no split tender, no line-level discounts
+(only an order-level `discountAmount`/`taxAmount`).
+
+## Reports
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/api/v1/reports/summary` | bearer | `?from=&to=` (ISO date, default last 7 days): order count, gross sales, top 5 best sellers — all for the caller's store, PAID orders only |
+
+Full request/response shapes for every endpoint are in Swagger UI.
 
 ## What's deliberately out of scope
 
-- **Catalog, Sales, Report modules** — moved to `deferred-phase2/` (not
-  compiled). They were built against this project's own old schema
-  (`products`, `orders`, `customers`, ...), which no longer exists now that
-  we point at the real database. Porting them means remapping onto
-  `products`/`product_categories`/`product_prices`, `sales_transactions`/
-  `sales_transaction_items`/`payments`/`cashier_sessions`,
-  `inventories`/`stock_movements`, etc. — a separate, larger piece of work.
-- **Store-scoped query filtering** — not implemented; nothing to scope
-  until phase 2.
+- **Purchase Orders, Stock Transfers, Stock Opname, Suppliers, Discount
+  Rules, Audit Logs, Store Settings** — real tables exist for all of these,
+  none are wired up. Stock only ever moves via `POST
+  /api/v1/products/{id}/restock` (manual, no PO/supplier trail) or a sale
+  (`/api/v1/orders`, decrements) / its void (restocks) — no receiving flow,
+  no transfer-between-stores, no periodic stock count reconciliation.
+- **Store-scoped query filtering beyond `getPrimaryStoreId()`** — no
+  multi-store selection for a user with grants at more than one store.
 - **Permission-level authorization** (`permissions`/`role_permissions`
   tables) — only role-code-level authorities (`ROLE_KASIR`, etc.) are
   wired up; fine-grained permission checks aren't used anywhere yet.
 - **Account lockout** — `users.failed_login_count` exists in the schema but
   isn't incremented on failed login; `last_login_at` **is** updated on
   success.
+- **Optimistic concurrency on `inventories`** — the table has a SQL Server
+  `rowversion` column (`row_version`) for it; we don't map it, relying
+  instead on a pessimistic row lock (`SELECT ... FOR UPDATE`-equivalent)
+  held for the duration of the sale transaction. Simpler, and enough at
+  this scale; revisit if lock contention becomes a real problem.
 - No refresh-token cleanup job for expired/revoked rows (fine at small
   scale; add a scheduled sweep before it matters).

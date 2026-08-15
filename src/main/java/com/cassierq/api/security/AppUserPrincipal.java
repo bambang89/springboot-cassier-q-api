@@ -5,6 +5,7 @@ import com.cassierq.api.domain.entity.UserRole;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import lombok.Getter;
 import org.springframework.security.core.GrantedAuthority;
@@ -76,5 +77,21 @@ public class AppUserPrincipal implements UserDetails {
     @Override
     public boolean isEnabled() {
         return active;
+    }
+
+    /**
+     * The store this user acts against for store-scoped endpoints (catalog
+     * pricing/stock, cashier sessions, sales). Picks the first store-scoped
+     * grant; {@code null} if the user has none (e.g. a pure SUPERADMIN with
+     * no store-level role) — callers should reject with a clear message
+     * rather than guess. Users with grants at more than one store aren't
+     * fully supported yet (no store-selection endpoint/header).
+     */
+    public UUID getPrimaryStoreId() {
+        return roleGrants.stream()
+                .map(RoleGrant::storeId)
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(null);
     }
 }
