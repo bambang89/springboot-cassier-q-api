@@ -46,6 +46,33 @@ public class CategoryService {
     }
 
     @Transactional
+    public CategoryResponse update(UUID id, CategoryRequest request) {
+        ProductCategory category = categoryRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Kategori tidak ditemukan"));
+
+        if (!category.getCategoryCode().equalsIgnoreCase(request.categoryCode())
+                && categoryRepository.existsByCategoryCodeIgnoreCase(request.categoryCode())) {
+            throw new ConflictException("Kode kategori sudah dipakai");
+        }
+
+        ProductCategory parent = null;
+        if (request.parentCategoryId() != null) {
+            if (request.parentCategoryId().equals(id)) {
+                throw new com.cassierq.api.common.exception.BadRequestException("Kategori tidak boleh jadi induk dirinya sendiri");
+            }
+            parent = categoryRepository.findById(request.parentCategoryId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Kategori induk tidak ditemukan"));
+        }
+
+        category.setCategoryCode(request.categoryCode());
+        category.setCategoryName(request.categoryName());
+        category.setParentCategory(parent);
+        categoryRepository.save(category);
+
+        return CategoryResponse.from(category);
+    }
+
+    @Transactional
     public void delete(UUID id) {
         if (!categoryRepository.existsById(id)) {
             throw new ResourceNotFoundException("Kategori tidak ditemukan");

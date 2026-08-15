@@ -3,6 +3,7 @@ package com.cassierq.api.sales;
 import com.cassierq.api.common.PageResponse;
 import com.cassierq.api.sales.dto.CreateOrderRequest;
 import com.cassierq.api.sales.dto.OrderResponse;
+import com.cassierq.api.sales.dto.ReceiptResponse;
 import com.cassierq.api.sales.dto.VoidOrderRequest;
 import com.cassierq.api.security.AppUserPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
@@ -49,6 +50,12 @@ public class OrderController {
     @Operation(summary = "Detail satu transaksi")
     public OrderResponse get(@AuthenticationPrincipal AppUserPrincipal principal, @PathVariable UUID id) {
         return orderService.get(id, principal);
+    }
+
+    @GetMapping("/{id}/receipt")
+    @Operation(summary = "Data struk/nota untuk dicetak — nama toko, item, total, metode bayar, sisa utang jika transaksi kredit")
+    public ReceiptResponse receipt(@AuthenticationPrincipal AppUserPrincipal principal, @PathVariable UUID id) {
+        return orderService.receipt(id, principal);
     }
 
     @PostMapping("/{id}/void")

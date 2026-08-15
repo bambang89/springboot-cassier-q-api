@@ -1,7 +1,7 @@
 package com.cassierq.api.catalog;
 
-import com.cassierq.api.catalog.dto.CategoryRequest;
-import com.cassierq.api.catalog.dto.CategoryResponse;
+import com.cassierq.api.catalog.dto.UnitRequest;
+import com.cassierq.api.catalog.dto.UnitResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -22,39 +22,39 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping("/api/v1/categories")
+@RequestMapping("/api/v1/units")
 @RequiredArgsConstructor
 @SecurityRequirement(name = "bearerAuth")
-@Tag(name = "Categories", description = "Kategori produk (katalog global, tidak per-toko)")
-public class CategoryController {
+@Tag(name = "Units", description = "Satuan produk (pcs, dus, kg, ...) — katalog global, tidak per-toko")
+public class UnitController {
 
-    private final CategoryService categoryService;
+    private final UnitService unitService;
 
     @GetMapping
-    @Operation(summary = "Daftar semua kategori")
-    public List<CategoryResponse> list() {
-        return categoryService.list();
+    @Operation(summary = "Daftar semua satuan")
+    public List<UnitResponse> list() {
+        return unitService.list();
     }
 
     @PostMapping
     @PreAuthorize("hasAnyRole('SUPERADMIN', 'PRODUCT')")
-    @Operation(summary = "Buat kategori baru")
-    public ResponseEntity<CategoryResponse> create(@Valid @RequestBody CategoryRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(categoryService.create(request));
+    @Operation(summary = "Buat satuan baru")
+    public ResponseEntity<UnitResponse> create(@Valid @RequestBody UnitRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(unitService.create(request));
     }
 
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyRole('SUPERADMIN', 'PRODUCT')")
-    @Operation(summary = "Perbarui kategori")
-    public CategoryResponse update(@PathVariable UUID id, @Valid @RequestBody CategoryRequest request) {
-        return categoryService.update(id, request);
+    @Operation(summary = "Perbarui satuan")
+    public UnitResponse update(@PathVariable UUID id, @Valid @RequestBody UnitRequest request) {
+        return unitService.update(id, request);
     }
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAnyRole('SUPERADMIN', 'PRODUCT')")
-    @Operation(summary = "Hapus kategori")
+    @Operation(summary = "Hapus satuan (gagal 409 jika masih dipakai produk)")
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
-        categoryService.delete(id);
+        unitService.delete(id);
         return ResponseEntity.noContent().build();
     }
 }

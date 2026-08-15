@@ -9,15 +9,15 @@ ever read that schema and additively migrate two tables of our own
 (`refresh_tokens`, `password_reset_tokens`) for JWT auth — see "Auth model"
 below.
 
-**Migration status:** Auth (register/login/me/change password/forgot
-password/reset password), Catalog (categories/products/prices/stock),
-Cashier Sessions, Sales (orders), and Reports are ported onto the real
-schema. **Not** ported: Purchase Orders, Stock Transfers, Stock Opname,
-Suppliers, Discount Rules, Audit Logs, Store Settings — these weren't part
-of this app's original 4-menu scope (Catalog/Sales/Report) and the old
-self-owned-schema code for the parts that *were* is retired to
-[`deferred-phase2/`](deferred-phase2/) (not compiled) purely for reference;
-nothing there still applies now that the schema underneath changed this much.
+**Migration status:** Auth, Catalog, Cashier Sessions, Sales, Reports,
+Employees, Purchase Orders/Suppliers, and Customers/Credit are ported onto
+the real schema (see their sections below). **Not** ported: Stock
+Transfers, Stock Opname, Discount Rules, Audit Logs, Store Settings — real
+tables exist for all of these, none are wired up yet. The old
+self-owned-schema code from before this project pointed at the real
+database is retired to [`deferred-phase2/`](deferred-phase2/) (not
+compiled) purely for reference; nothing there still applies now that the
+schema underneath changed this much.
 
 ## Tech stack
 
@@ -197,7 +197,40 @@ Category/Product writes require `PRODUCT` or `SUPERADMIN` role.
 | POST | `/api/v1/products` | bearer, PRODUCT/SUPERADMIN | also creates price + zero stock for caller's store |
 | PUT | `/api/v1/products/{id}` | bearer, PRODUCT/SUPERADMIN | a changed price closes the old `product_prices` row and opens a new one (history preserved) |
 | DELETE | `/api/v1/products/{id}` | bearer, PRODUCT/SUPERADMIN | soft delete (`deleted_at` + status `INACTIVE`) — past sales still reference the row |
-| POST | `/api/v1/products/{id}/restock` | bearer, SUPERADMIN/KEPALA_TOKO/GUDANG | body: `unitId`, `quantity`, `notes?`. Manual stock-in only — no Purchase Order flow (see "What's deliberately out of scope"); creates the store's `inventories` row on first restock if the store never carried this product before. Always records a `STOCK_IN` stock_movements row. |
+| POST | `/api/v1/products/{id}/restock` | bearer, SUPERADMIN/KEPALA_TOKO/GUDANG | body: `unitId`, `quantity`, `notes?`. Manual stock-in — creates the store's `inventories` row on first restock if the store never carried this product before. Always records a `STOCK_IN` stock_movements row. See Purchase Orders below for the formal, supplier-tracked way to add stock. |
+
+## Employees
+
+`POST /api/v1/auth/register` always creates a **new store** — it's not how
+you add a second staff member to an existing one. This is that: adds an
+`Employee` + `User` + one `UserRole` grant to the **caller's own store** in
+one transaction, provisioning nothing else (no new store, no
+`number_sequences`).
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/api/v1/roles` | bearer, SUPERADMIN/KEPALA_TOKO | catalog of assignable role codes (excludes `SUPERADMIN` — can't self-service-grant it) |
+| POST | `/api/v1/employees` | bearer, SUPERADMIN/KEPALA_TOKO | body: `name`, `username`, `email?`, `phone?`, `password`, `roleCode` (`KEPALA_TOKO`/`PRODUCT`/`GUDANG`/`KASIR`). Sets `must_change_password = true` — the owner picked this password, not the employee (not yet enforced at login, see "What's deliberately out of scope") |
+| GET | `/api/v1/employees` | bearer, SUPERADMIN/KEPALA_TOKO | everyone at the caller's store, including the caller |
+| GET | `/api/v1/employees/{id}` | bearer, SUPERADMIN/KEPALA_TOKO | |
+| POST | `/api/v1/employees/{id}/deactivate` | bearer, SUPERADMIN/KEPALA_TOKO | `Employee.active` + `User.active` → false, and immediately kills their sessions/refresh tokens/devices (same as `/auth/revoke`) — they can't finish out their current 1-day access token. Can't deactivate yourself (400). |
+| POST | `/api/v1/employees/{id}/reactivate` | bearer, SUPERADMIN/KEPALA_TOKO | |
+
+## Purchase Orders & Suppliers
+
+Formal, supplier-tracked stock-in — an alternative to the manual `/restock`
+above. `suppliers` is a global catalog (like products); `purchase_orders`/
+`purchase_order_items` are store-scoped. `po_number` uses the same
+generator as `transaction_number` (see Sales below), against the
+`PURCHASE_ORDER`/`PO` `number_sequences` row.
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET / POST / PUT / DELETE | `/api/v1/suppliers` | bearer / SUPERADMIN,KEPALA_TOKO,GUDANG | global catalog; DELETE soft-deactivates |
+| POST | `/api/v1/purchase-orders` | bearer, SUPERADMIN/KEPALA_TOKO/GUDANG | creates with status `ORDERED` directly (no separate DRAFT→ORDERED step) |
+| GET | `/api/v1/purchase-orders` / `/{id}` | bearer, SUPERADMIN/KEPALA_TOKO/GUDANG | paginated / detail |
+| POST | `/api/v1/purchase-orders/{id}/receive` | bearer, SUPERADMIN/KEPALA_TOKO/GUDANG | body: list of `{purchaseOrderItemId, receivedQuantity}` — partial receiving supported (repeat calls); increments `inventories` + records a `PURCHASE` stock_movements row per item; status becomes `PARTIALLY_RECEIVED` or `RECEIVED` once every line is fully in. Rejects over-receiving past what was ordered. |
+| POST | `/api/v1/purchase-orders/{id}/cancel` | bearer, SUPERADMIN/KEPALA_TOKO/GUDANG | only while `DRAFT`/`ORDERED` — once anything's been received, it can't be cancelled |
 
 ## Cashier Sessions
 
@@ -220,7 +253,8 @@ product's current store price is used (never a client-supplied price), the
 requested unit is converted to base units via `product_unit_conversions`,
 stock is checked and decremented under a pessimistic row lock (concurrent
 sales of the same product can't oversell it), and a `stock_movements` audit
-row is written. `transaction_number` is generated from that store's
+row is written. `transaction_number` is generated by the shared
+`NumberSequenceService` (also used by Purchase Orders) from that store's
 `number_sequences` row: `{prefix}-{storeCode}-{yyMMdd}-{seq:6}` (matches the
 existing data's own format, e.g. `TRX-STR001-260810-000001`).
 
@@ -231,9 +265,18 @@ existing data's own format, e.g. `TRX-STR001-260810-000001`).
 | GET | `/api/v1/orders/{id}` | bearer | |
 | POST | `/api/v1/orders/{id}/void` | bearer | body: `reason`; restocks items, PAID → VOID |
 
-Only single, full-amount `CASH`/`CREDIT_CARD`/`DEBIT`/`TRANSFER`/`QRIS`
-payment per order is supported — no split tender, no line-level discounts
-(only an order-level `discountAmount`/`taxAmount`).
+Only single-method `CASH`/`CREDIT_CARD`/`DEBIT`/`TRANSFER`/`QRIS` payment
+per order — no split tender, no line-level discounts (only an order-level
+`discountAmount`/`taxAmount`).
+
+**Credit sales:** `CreateOrderRequest` takes an optional `customerId`. Omit
+it and behavior is exactly as before (`paymentAmount` must cover the full
+total, or 400). Set it and pay less than the total, and the shortfall is
+recorded as a `DEBT` against that customer (see Customers below) instead of
+being rejected — checked against their `creditLimit` first, and the entire
+sale (stock deduction included) rolls back if it would be exceeded. The
+response's `customerId`/`debtAmount` reflect this only right after creation
+— `GET`/list don't reconstruct them (check the customer's ledger instead).
 
 ## Reports
 
@@ -241,16 +284,42 @@ payment per order is supported — no split tender, no line-level discounts
 |---|---|---|---|
 | GET | `/api/v1/reports/summary` | bearer | `?from=&to=` (ISO date, default last 7 days): order count, gross sales, top 5 best sellers — all for the caller's store, PAID orders only |
 
+## Customers & Credit (hutang/piutang)
+
+**Entirely new — the real schema has no customer concept at all**, no
+`customers` table anywhere among its 30. `customers` and
+`customer_ledger_entries` are ours (additive), store-scoped. Balance isn't
+a stored running total — it's `sum(DEBT) − sum(PAYMENT)` computed on read
+(`CustomerLedgerEntryRepository.balanceOf`), so it can't drift out of sync.
+A ledger entry, once written, is never edited.
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| POST | `/api/v1/customers` | bearer | body: `customerCode`, `name`, `phone?`, `address?`, `creditLimit?` |
+| GET | `/api/v1/customers` / `/{id}` | bearer | includes computed `balance` |
+| PUT | `/api/v1/customers/{id}` | bearer, SUPERADMIN/KEPALA_TOKO | only role that can change `creditLimit` |
+| GET | `/api/v1/customers/{id}/ledger` | bearer | every DEBT/PAYMENT entry, newest first, with the linked `sales_transaction_id`/`transactionNumber` when it came from a credit sale |
+| POST | `/api/v1/customers/{id}/payments` | bearer | records a `PAYMENT` entry (customer paying down their tab) — not tied to a sale |
+
+`customer_ledger_entries.sales_transaction_id` FKs into the real
+`sales_transactions` table (their PK, read-only reference — doesn't alter
+their schema, but does mean a linked row can't be hard-deleted out from
+under us; acceptable since that table is soft-stated via
+`transaction_status`, never hard-deleted in practice).
+
 Full request/response shapes for every endpoint are in Swagger UI.
 
 ## What's deliberately out of scope
 
-- **Purchase Orders, Stock Transfers, Stock Opname, Suppliers, Discount
-  Rules, Audit Logs, Store Settings** — real tables exist for all of these,
-  none are wired up. Stock only ever moves via `POST
-  /api/v1/products/{id}/restock` (manual, no PO/supplier trail) or a sale
-  (`/api/v1/orders`, decrements) / its void (restocks) — no receiving flow,
-  no transfer-between-stores, no periodic stock count reconciliation.
+- **Stock Transfers, Stock Opname, Discount Rules, Audit Logs, Store
+  Settings** — real tables exist for all of these, none are wired up: no
+  transfer-between-stores, no periodic physical stock count reconciliation,
+  no per-item/promo discount rules (only order-level `discountAmount`), no
+  audit trail of who changed what, no per-store config (tax rate, printer,
+  ...).
+- **`must_change_password` isn't enforced** — set to `true` when
+  `/api/v1/employees` creates an account, but login doesn't currently check
+  or act on it.
 - **Store-scoped query filtering beyond `getPrimaryStoreId()`** — no
   multi-store selection for a user with grants at more than one store.
 - **Permission-level authorization** (`permissions`/`role_permissions`
@@ -262,7 +331,7 @@ Full request/response shapes for every endpoint are in Swagger UI.
 - **Optimistic concurrency on `inventories`** — the table has a SQL Server
   `rowversion` column (`row_version`) for it; we don't map it, relying
   instead on a pessimistic row lock (`SELECT ... FOR UPDATE`-equivalent)
-  held for the duration of the sale transaction. Simpler, and enough at
-  this scale; revisit if lock contention becomes a real problem.
-- No refresh-token cleanup job for expired/revoked rows (fine at small
-  scale; add a scheduled sweep before it matters).
+  held for the duration of the sale/receiving transaction. Simpler, and
+  enough at this scale; revisit if lock contention becomes a real problem.
+- No refresh-token/session cleanup job for expired/revoked rows (fine at
+  small scale; add a scheduled sweep before it matters).

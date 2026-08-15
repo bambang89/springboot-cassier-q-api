@@ -1,11 +1,13 @@
 package com.cassierq.api.sales;
 
+import com.cassierq.api.common.NumberSequenceService;
 import com.cassierq.api.common.PageResponse;
 import com.cassierq.api.common.exception.BadRequestException;
 import com.cassierq.api.common.exception.ResourceNotFoundException;
+import com.cassierq.api.customer.CustomerService;
 import com.cassierq.api.domain.entity.CashierSession;
+import com.cassierq.api.domain.entity.Customer;
 import com.cassierq.api.domain.entity.Inventory;
-import com.cassierq.api.domain.entity.NumberSequence;
 import com.cassierq.api.domain.entity.Payment;
 import com.cassierq.api.domain.entity.Product;
 import com.cassierq.api.domain.entity.ProductUnitConversion;
@@ -16,8 +18,9 @@ import com.cassierq.api.domain.entity.Store;
 import com.cassierq.api.domain.entity.Unit;
 import com.cassierq.api.domain.entity.User;
 import com.cassierq.api.domain.repository.CashierSessionRepository;
+import com.cassierq.api.domain.repository.CustomerLedgerEntryRepository;
+import com.cassierq.api.domain.repository.CustomerRepository;
 import com.cassierq.api.domain.repository.InventoryRepository;
-import com.cassierq.api.domain.repository.NumberSequenceRepository;
 import com.cassierq.api.domain.repository.PaymentRepository;
 import com.cassierq.api.domain.repository.ProductPriceRepository;
 import com.cassierq.api.domain.repository.ProductRepository;
@@ -32,11 +35,11 @@ import com.cassierq.api.sales.dto.CreateOrderItemRequest;
 import com.cassierq.api.sales.dto.CreateOrderRequest;
 import com.cassierq.api.sales.dto.OrderItemResponse;
 import com.cassierq.api.sales.dto.OrderResponse;
+import com.cassierq.api.sales.dto.ReceiptItemResponse;
+import com.cassierq.api.sales.dto.ReceiptResponse;
 import com.cassierq.api.security.AppUserPrincipal;
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -50,22 +53,22 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class OrderService {
 
-    private static final DateTimeFormatter SEQUENCE_DATE_FORMAT =
-            DateTimeFormatter.ofPattern("yyMMdd").withZone(ZoneOffset.UTC);
-
     private final ProductRepository productRepository;
     private final UnitRepository unitRepository;
     private final ProductUnitConversionRepository conversionRepository;
     private final ProductPriceRepository priceRepository;
     private final InventoryRepository inventoryRepository;
     private final CashierSessionRepository cashierSessionRepository;
-    private final NumberSequenceRepository numberSequenceRepository;
+    private final NumberSequenceService numberSequenceService;
     private final SalesTransactionRepository transactionRepository;
     private final SalesTransactionItemRepository itemRepository;
     private final PaymentRepository paymentRepository;
     private final StockMovementRepository stockMovementRepository;
     private final StoreRepository storeRepository;
     private final UserRepository userRepository;
+    private final CustomerRepository customerRepository;
+    private final CustomerService customerService;
+    private final CustomerLedgerEntryRepository ledgerRepository;
 
     @Transactional
     public OrderResponse create(CreateOrderRequest request, AppUserPrincipal principal) {
@@ -97,12 +100,29 @@ public class OrderService {
         if (grandTotal.compareTo(BigDecimal.ZERO) < 0) {
             throw new BadRequestException("Diskon melebihi total belanja");
         }
-        if (request.paymentAmount().compareTo(grandTotal) < 0) {
-            throw new BadRequestException("Jumlah pembayaran kurang dari total belanja");
-        }
-        BigDecimal changeAmount = request.paymentAmount().subtract(grandTotal);
 
-        String transactionNumber = nextTransactionNumber(store);
+        Customer customer = null;
+        if (request.customerId() != null) {
+            customer = customerRepository.findByIdAndStoreId(request.customerId(), storeId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Pelanggan tidak ditemukan"));
+        }
+
+        BigDecimal debtAmount = BigDecimal.ZERO;
+        BigDecimal changeAmount;
+        boolean shortPaid = request.paymentAmount().compareTo(grandTotal) < 0;
+        if (customer != null && shortPaid) {
+            // Credit sale — the unpaid part becomes a debt for this customer
+            // instead of rejecting the order (checked further down, after
+            // the transaction exists, since recordDebtForSale needs its id).
+            debtAmount = grandTotal.subtract(request.paymentAmount());
+            changeAmount = BigDecimal.ZERO;
+        } else if (shortPaid) {
+            throw new BadRequestException("Jumlah pembayaran kurang dari total belanja");
+        } else {
+            changeAmount = request.paymentAmount().subtract(grandTotal);
+        }
+
+        String transactionNumber = numberSequenceService.next(store, "SALES_TRANSACTION");
         Instant now = Instant.now();
 
         SalesTransaction transaction = transactionRepository.save(SalesTransaction.builder()
@@ -144,7 +164,14 @@ public class OrderService {
                 .createdAt(now)
                 .build());
 
-        return toResponse(transaction, items);
+        if (customer != null && debtAmount.compareTo(BigDecimal.ZERO) > 0) {
+            // Throws (rolling back the whole sale, stock deduction included)
+            // if this would push the customer past their credit limit.
+            customerService.recordDebtForSale(customer, debtAmount, transaction, cashier);
+        }
+
+        return OrderResponse.from(transaction, items.stream().map(OrderItemResponse::from).toList(),
+                customer != null ? customer.getId() : null, customer != null ? debtAmount : null);
     }
 
     @Transactional
@@ -210,6 +237,48 @@ public class OrderService {
         return toResponse(transaction, itemRepository.findByTransactionId(id));
     }
 
+    @Transactional(readOnly = true)
+    public ReceiptResponse receipt(UUID id, AppUserPrincipal principal) {
+        UUID storeId = requireStore(principal);
+        SalesTransaction transaction = transactionRepository.findByIdAndStoreId(id, storeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Transaksi tidak ditemukan"));
+        List<SalesTransactionItem> items = itemRepository.findByTransactionId(id);
+
+        String paymentMethod = paymentRepository.findByTransactionId(id).stream()
+                .findFirst()
+                .map(Payment::getPaymentMethod)
+                .orElse(null);
+
+        String customerName = null;
+        BigDecimal debtAmount = null;
+        var debtEntry = ledgerRepository.findFirstBySalesTransactionIdAndEntryType(id, "DEBT");
+        if (debtEntry.isPresent()) {
+            customerName = debtEntry.get().getCustomer().getName();
+            debtAmount = debtEntry.get().getAmount();
+        }
+
+        Store store = transaction.getStore();
+        return new ReceiptResponse(
+                transaction.getId(),
+                transaction.getTransactionNumber(),
+                transaction.getTransactionDate(),
+                transaction.getTransactionStatus(),
+                store.getStoreName(),
+                store.getAddress(),
+                store.getPhone(),
+                transaction.getCashier().getEmployee().getFullName(),
+                items.stream().map(ReceiptItemResponse::from).toList(),
+                transaction.getSubtotal(),
+                transaction.getDiscountAmount(),
+                transaction.getTaxAmount(),
+                transaction.getGrandTotal(),
+                paymentMethod,
+                transaction.getPaymentAmount(),
+                transaction.getChangeAmount(),
+                customerName,
+                debtAmount);
+    }
+
     private LineResult priceAndReserveLine(UUID storeId, CreateOrderItemRequest itemRequest) {
         Product product = productRepository.findById(itemRequest.productId())
                 .filter(p -> p.getDeletedAt() == null && "ACTIVE".equals(p.getStatus()))
@@ -258,19 +327,6 @@ public class OrderService {
                 .build();
 
         return new LineResult(item, movement, lineSubtotal);
-    }
-
-    private String nextTransactionNumber(Store store) {
-        NumberSequence sequence = numberSequenceRepository.findForUpdate(store.getId(), "SALES_TRANSACTION")
-                .orElseThrow(() -> new IllegalStateException(
-                        "number_sequences belum di-seed untuk store " + store.getId() + " / SALES_TRANSACTION"));
-        long next = sequence.getCurrentValue() + 1;
-        sequence.setCurrentValue(next);
-        sequence.setUpdatedAt(Instant.now());
-        numberSequenceRepository.save(sequence);
-
-        String datePart = SEQUENCE_DATE_FORMAT.format(Instant.now());
-        return "%s-%s-%s-%06d".formatted(sequence.getPrefix(), store.getStoreCode(), datePart, next);
     }
 
     private OrderResponse toResponse(SalesTransaction transaction, List<SalesTransactionItem> items) {

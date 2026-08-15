@@ -161,9 +161,7 @@ public class AuthService {
 
     @Transactional
     public void logoutAllDevices(UUID userId) {
-        userSessionRepository.revokeAllByUserId(userId);
-        refreshTokenRepository.revokeAllByUserId(userId);
-        deviceRepository.deleteAllByUserId(userId);
+        revokeAllSessions(userId);
     }
 
     @Transactional
@@ -178,9 +176,20 @@ public class AuthService {
             }
         }
 
-        userSessionRepository.revokeAllByUserId(targetUserId);
-        refreshTokenRepository.revokeAllByUserId(targetUserId);
-        deviceRepository.deleteAllByUserId(targetUserId);
+        revokeAllSessions(targetUserId);
+    }
+
+    /**
+     * Unconditionally kills every live session/refresh token/device record
+     * for a user — no authorization check, callers must have already done
+     * their own (see {@link #revokeUserSessions}, and employee deactivation
+     * in {@code EmployeeService}).
+     */
+    @Transactional
+    public void revokeAllSessions(UUID userId) {
+        userSessionRepository.revokeAllByUserId(userId);
+        refreshTokenRepository.revokeAllByUserId(userId);
+        deviceRepository.deleteAllByUserId(userId);
     }
 
     @Transactional(readOnly = true)
@@ -286,8 +295,9 @@ public class AuthService {
     }
 
     /**
-     * Upserts a `devices` row with the freshly issued access token — one row
-     * per physical device, not one per login. Keyed by {@code deviceId} when
+     * Upserts a `devices` row with the payload segment of the freshly issued
+     * access token (header and signature are discarded) — one row per
+     * physical device, not one per login. Keyed by {@code deviceId} when
      * the client sends one (the precise identifier); falls back to
      * {@code deviceType} otherwise (coarser — a second device of the same
      * platform without an id overwrites the first).
@@ -315,7 +325,7 @@ public class AuthService {
         if (ctx.deviceType() != null) {
             device.setDeviceType(ctx.deviceType());
         }
-        device.setToken(accessToken);
+        device.setToken(jwtService.extractPayload(accessToken));
         deviceRepository.save(device);
     }
 }

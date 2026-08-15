@@ -21,9 +21,16 @@ public record OrderResponse(
         BigDecimal changeAmount,
         String status,
         String voidReason,
-        List<OrderItemResponse> items) {
+        List<OrderItemResponse> items,
+        UUID customerId,
+        BigDecimal debtAmount) {
 
     public static OrderResponse from(SalesTransaction transaction, List<OrderItemResponse> items) {
+        return from(transaction, items, null, null);
+    }
+
+    /** customerId/debtAmount are only known at creation time (see OrderService.create) — not reconstructed on get()/list(). */
+    public static OrderResponse from(SalesTransaction transaction, List<OrderItemResponse> items, UUID customerId, BigDecimal debtAmount) {
         return new OrderResponse(
                 transaction.getId(),
                 transaction.getTransactionNumber(),
@@ -39,6 +46,8 @@ public record OrderResponse(
                 transaction.getChangeAmount(),
                 transaction.getTransactionStatus(),
                 transaction.getVoidReason(),
-                items);
+                items,
+                customerId,
+                debtAmount);
     }
 }

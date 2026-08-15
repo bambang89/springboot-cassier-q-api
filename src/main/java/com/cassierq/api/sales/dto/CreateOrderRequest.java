@@ -7,6 +7,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.UUID;
 
 public record CreateOrderRequest(
         @NotEmpty(message = "Item transaksi wajib diisi")
@@ -25,5 +26,11 @@ public record CreateOrderRequest(
         BigDecimal discountAmount,
 
         @DecimalMin(value = "0", message = "Pajak tidak boleh negatif")
-        BigDecimal taxAmount) {
+        BigDecimal taxAmount,
+
+        // Optional. When set and paymentAmount < total, the shortfall is
+        // recorded as a debt for this customer instead of being rejected —
+        // see CustomerService.recordDebtForSale. Omit entirely for the
+        // original cash/full-payment-only behavior.
+        UUID customerId) {
 }

@@ -117,6 +117,15 @@ public class JwtService {
         return Instant.now().plus(jwtProperties.refreshTokenTtlDays(), ChronoUnit.DAYS);
     }
 
+    /** Extracts the payload segment (second dot-separated part) of a compact JWT string. */
+    public String extractPayload(String jwt) {
+        String[] parts = jwt.split("\\.");
+        if (parts.length < 2) {
+            throw new IllegalArgumentException("Token JWT tidak valid");
+        }
+        return parts[1];
+    }
+
     public String hashToken(String rawToken) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
