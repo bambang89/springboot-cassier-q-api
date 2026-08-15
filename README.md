@@ -102,6 +102,13 @@ SUPERADMIN). JWT authorities are `ROLE_<role_code>` per grant, plus
   refresh token invalidates the whole chain the next time the legitimate
   client tries to use it.
 - `POST /api/v1/auth/logout` — revokes a refresh token.
+- `POST /api/v1/auth/logout-all` — kills **every** live session (all access
+  tokens + all refresh tokens) for the caller, effective on the very next
+  request anywhere, not just future ones.
+- `POST /api/v1/auth/revoke/{userId}` — admin force-logout of another user
+  (same effect as `logout-all`, on their account). `SUPERADMIN` role can
+  target anyone; `KEPALA_TOKO` only someone whose `Employee.store` matches
+  the caller's own store (400 otherwise).
 - `GET /api/v1/auth/me` — current user profile + role grants (requires
   `Authorization: Bearer <accessToken>`).
 - `POST /api/v1/auth/change-password` — authenticated user changes their own
@@ -117,12 +124,22 @@ SUPERADMIN). JWT authorities are `ROLE_<role_code>` per grant, plus
 - `POST /api/v1/auth/reset-password` — exchanges that token for a new
   password. One-time use; also revokes all of that user's refresh tokens.
 
-Access tokens are self-contained JWTs (claims: `sub`=userId, `username`,
-`email`, `superadmin`, `roles`=`"CODE:storeUuid,CODE2:,..."`) validated
-without a DB round trip per request — see `JwtAuthenticationFilter`.
-Refresh tokens are opaque random strings; only their SHA-256 hash is stored
-(`refresh_tokens.token_hash`), so a leaked DB row can't be replayed as a
-live token.
+**Access tokens are session-checked, not purely stateless.** Each JWT
+(claims: `jti`, `sub`=userId, `employeeId`, `username`, `email`,
+`superadmin`, `roles`=`"CODE:storeUuid,CODE2:,..."`) has a matching
+`user_sessions` row created at issue time; `JwtAuthenticationFilter` — the
+one place every single API request passes through — verifies the
+signature/expiry **and** looks up that row on every request, rejecting it
+if revoked or expired even though the JWT itself would still verify. That
+DB round trip per request is a deliberate trade-off: it's what makes
+`logout-all`/`revoke` take effect immediately, which is also why the access
+token TTL could safely move from 15 minutes to **1 day**
+(`JWT_ACCESS_TTL_MINUTES`) — a revoke no longer has to wait out the TTL.
+
+Refresh tokens are separate: opaque random strings, only their SHA-256 hash
+stored (`refresh_tokens.token_hash`), so a leaked DB row can't be replayed
+as a live token. `logout-all`/`revoke` clear both `user_sessions` and
+`refresh_tokens` for the target user.
 
 **Store scoping:** every store-scoped endpoint below acts on
 `principal.getPrimaryStoreId()` — the first store-scoped role grant found

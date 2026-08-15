@@ -16,32 +16,38 @@ import org.springframework.security.core.userdetails.UserDetails;
 public class AppUserPrincipal implements UserDetails {
 
     private final UUID userId;
+    private final UUID employeeId;
     private final String username;
     private final String email;
     private final String passwordHash;
     private final boolean superadmin;
     private final boolean active;
     private final List<RoleGrant> roleGrants;
+    private final String jti;
 
     public AppUserPrincipal(User user, List<RoleGrant> roleGrants) {
         this.userId = user.getId();
+        this.employeeId = user.getEmployee().getId();
         this.username = user.getUsername();
         this.email = user.getEmail();
         this.passwordHash = user.getPasswordHash();
         this.superadmin = user.isSuperadmin();
         this.active = user.isActive();
         this.roleGrants = roleGrants;
+        this.jti = null;
     }
 
-    /** Rebuilds the principal straight from JWT claims — no DB round trip per request. */
-    public AppUserPrincipal(UUID userId, String username, String email, boolean superadmin, boolean active, List<RoleGrant> roleGrants) {
+    public AppUserPrincipal(UUID userId, UUID employeeId, String username, String email, boolean superadmin, boolean active,
+            List<RoleGrant> roleGrants, String jti) {
         this.userId = userId;
+        this.employeeId = employeeId;
         this.username = username;
         this.email = email;
         this.passwordHash = null;
         this.superadmin = superadmin;
         this.active = active;
         this.roleGrants = roleGrants;
+        this.jti = jti;
     }
 
     /** Builds a principal from a loaded {@link User} plus their {@code user_roles} rows (role + store already fetched). */
@@ -63,6 +69,9 @@ public class AppUserPrincipal implements UserDetails {
         roleGrants.forEach(grant -> authorities.add(new SimpleGrantedAuthority("ROLE_" + grant.roleCode())));
         return authorities;
     }
+    public boolean hasRole(String roleCode) {
+        return getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_" + roleCode));
+    }
 
     @Override
     public String getPassword() {
@@ -79,14 +88,6 @@ public class AppUserPrincipal implements UserDetails {
         return active;
     }
 
-    /**
-     * The store this user acts against for store-scoped endpoints (catalog
-     * pricing/stock, cashier sessions, sales). Picks the first store-scoped
-     * grant; {@code null} if the user has none (e.g. a pure SUPERADMIN with
-     * no store-level role) — callers should reject with a clear message
-     * rather than guess. Users with grants at more than one store aren't
-     * fully supported yet (no store-selection endpoint/header).
-     */
     public UUID getPrimaryStoreId() {
         return roleGrants.stream()
                 .map(RoleGrant::storeId)

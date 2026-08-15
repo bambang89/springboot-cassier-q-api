@@ -21,6 +21,7 @@ import com.cassierq.api.domain.entity.Role;
 import com.cassierq.api.domain.entity.Store;
 import com.cassierq.api.domain.entity.User;
 import com.cassierq.api.domain.entity.UserRole;
+import com.cassierq.api.domain.entity.UserSession;
 import com.cassierq.api.domain.repository.EmployeeRepository;
 import com.cassierq.api.domain.repository.NumberSequenceRepository;
 import com.cassierq.api.domain.repository.PasswordResetTokenRepository;
@@ -29,6 +30,7 @@ import com.cassierq.api.domain.repository.RoleRepository;
 import com.cassierq.api.domain.repository.StoreRepository;
 import com.cassierq.api.domain.repository.UserRepository;
 import com.cassierq.api.domain.repository.UserRoleRepository;
+import com.cassierq.api.domain.repository.UserSessionRepository;
 import com.cassierq.api.security.AppUserPrincipal;
 import com.cassierq.api.security.JwtService;
 import java.time.Instant;
@@ -46,13 +48,8 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class AuthService {
 
-    // The store-head role newly registered accounts are granted — the closest
-    // equivalent, in this RBAC schema, of the old single "OWNER" role.
     private static final String DEFAULT_REGISTER_ROLE_CODE = "KEPALA_TOKO";
 
-    // Same sequence types/prefixes the existing stores were seeded with —
-    // sales creation (and, later, stock opname/PO/transfer) needs a row here
-    // per store, and nothing else provisions it for a store this app creates.
     private static final java.util.Map<String, String> DEFAULT_SEQUENCES = java.util.Map.of(
             "SALES_TRANSACTION", "TRX",
             "STOCK_OPNAME", "SO",
@@ -66,6 +63,7 @@ public class AuthService {
     private final UserRoleRepository userRoleRepository;
     private final NumberSequenceRepository numberSequenceRepository;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final UserSessionRepository userSessionRepository;
     private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final PasswordResetMailSender passwordResetMailSender;
     private final PasswordEncoder passwordEncoder;
@@ -90,8 +88,6 @@ public class AuthService {
                 .build());
         provisionNumberSequences(store);
 
-        // Every login account maps 1:1 to an employee record in this schema;
-        // the username doubles as the employee code since we don't collect one separately here.
         Employee employee = employeeRepository.save(Employee.builder()
                 .employeeCode(request.username())
                 .store(store)
@@ -159,6 +155,28 @@ public class AuthService {
         });
     }
 
+    @Transactional
+    public void logoutAllDevices(UUID userId) {
+        userSessionRepository.revokeAllByUserId(userId);
+        refreshTokenRepository.revokeAllByUserId(userId);
+    }
+
+    @Transactional
+    public void revokeUserSessions(AppUserPrincipal caller, UUID targetUserId) {
+        User target = userRepository.findById(targetUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("User tidak ditemukan"));
+
+        if (!caller.hasRole("SUPERADMIN")) {
+            UUID targetStoreId = target.getEmployee().getStore() != null ? target.getEmployee().getStore().getId() : null;
+            if (targetStoreId == null || !targetStoreId.equals(caller.getPrimaryStoreId())) {
+                throw new BadRequestException("Anda hanya bisa me-revoke user di toko Anda sendiri");
+            }
+        }
+
+        userSessionRepository.revokeAllByUserId(targetUserId);
+        refreshTokenRepository.revokeAllByUserId(targetUserId);
+    }
+
     @Transactional(readOnly = true)
     public UserResponse me(UUID userId) {
         User user = userRepository.findById(userId)
@@ -181,17 +199,9 @@ public class AuthService {
         user.setMustChangePassword(false);
         userRepository.save(user);
 
-        // A password change should invalidate sessions issued under the old
-        // credential, same reasoning as revoking a refresh token chain.
         refreshTokenRepository.revokeAllByUserId(user.getId());
     }
 
-    /**
-     * Starts the "forgot password" flow: issues a one-time reset token and
-     * hands it to {@link PasswordResetMailSender}. Always completes the same
-     * way whether or not the username is registered, so the endpoint can't be
-     * used to enumerate accounts.
-     */
     @Transactional
     public void forgotPassword(ForgotPasswordRequest request) {
         userRepository.findByUsernameIgnoreCase(request.username()).ifPresent(user -> {
@@ -239,7 +249,17 @@ public class AuthService {
     private AuthResponse issueTokens(User user) {
         List<UserRole> userRoles = userRoleRepository.findAllByUserIdFetchingRole(user.getId());
         AppUserPrincipal principal = AppUserPrincipal.of(user, userRoles);
-        String accessToken = jwtService.issueAccessToken(principal);
+
+        String jti = jwtService.generateSessionId();
+        Instant now = Instant.now();
+        Instant expiry = now.plus(jwtProperties.accessTokenTtlMinutes(), ChronoUnit.MINUTES);
+        userSessionRepository.save(UserSession.builder()
+                .user(user)
+                .jti(jti)
+                .issuedAt(now)
+                .expiresAt(expiry)
+                .build());
+        String accessToken = jwtService.issueAccessToken(principal, jti);
 
         String rawRefreshToken = jwtService.generateRefreshTokenValue();
         refreshTokenRepository.save(RefreshToken.builder()

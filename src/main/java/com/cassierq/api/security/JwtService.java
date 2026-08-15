@@ -34,11 +34,14 @@ public class JwtService {
         return Keys.hmacShaKeyFor(jwtProperties.secret().getBytes(StandardCharsets.UTF_8));
     }
 
-    public String issueAccessToken(AppUserPrincipal principal) {
+
+    public String issueAccessToken(AppUserPrincipal principal, String jti) {
         Instant now = Instant.now();
         Instant expiry = now.plus(jwtProperties.accessTokenTtlMinutes(), ChronoUnit.MINUTES);
         return Jwts.builder()
+                .id(jti)
                 .subject(principal.getUserId().toString())
+                .claim("employeeId", principal.getEmployeeId().toString())
                 .claim("username", principal.getUsername())
                 .claim("email", principal.getEmail())
                 .claim("superadmin", principal.isSuperadmin())
@@ -56,20 +59,23 @@ public class JwtService {
                     .build()
                     .parseSignedClaims(token)
                     .getPayload();
+            String jti = claims.getId();
+            if (jti == null || jti.isBlank()) {
+                return Optional.empty();
+            }
             return Optional.of(new AccessTokenClaims(
                     UUID.fromString(claims.getSubject()),
+                    UUID.fromString(claims.get("employeeId", String.class)),
                     claims.get("username", String.class),
                     claims.get("email", String.class),
                     Boolean.TRUE.equals(claims.get("superadmin", Boolean.class)),
-                    decodeRoleGrants(claims.get("roles", String.class))));
+                    decodeRoleGrants(claims.get("roles", String.class)),
+                    jti));
         } catch (JwtException | IllegalArgumentException e) {
             return Optional.empty();
         }
     }
 
-    // "ROLE_CODE:storeUuid,ROLE_CODE2:" (empty storeUuid = not store-scoped) —
-    // plain delimited string rather than a nested JSON claim, so it round-trips
-    // the same way regardless of which JSON provider jjwt is configured with.
     private String encodeRoleGrants(List<RoleGrant> grants) {
         return grants.stream()
                 .map(g -> g.roleCode() + ":" + (g.storeId() == null ? "" : g.storeId()))
@@ -95,13 +101,14 @@ public class JwtService {
         return generateOpaqueToken();
     }
 
-    /**
-     * High-entropy random token, base64url-encoded. Shared by refresh tokens
-     * and password reset tokens — both are bearer secrets handed to the
-     * client and only ever stored server-side as a hash (see {@link #hashToken}).
-     */
     public String generateOpaqueToken() {
         byte[] bytes = new byte[64];
+        secureRandom.nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
+    public String generateSessionId() {
+        byte[] bytes = new byte[32];
         secureRandom.nextBytes(bytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
@@ -110,7 +117,6 @@ public class JwtService {
         return Instant.now().plus(jwtProperties.refreshTokenTtlDays(), ChronoUnit.DAYS);
     }
 
-    /** Only this hash is ever persisted — a leaked DB row can't be replayed as a live refresh token. */
     public String hashToken(String rawToken) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -121,6 +127,7 @@ public class JwtService {
         }
     }
 
-    public record AccessTokenClaims(UUID userId, String username, String email, boolean superadmin, List<RoleGrant> roleGrants) {
+    public record AccessTokenClaims(
+            UUID userId, UUID employeeId, String username, String email, boolean superadmin, List<RoleGrant> roleGrants, String jti) {
     }
 }

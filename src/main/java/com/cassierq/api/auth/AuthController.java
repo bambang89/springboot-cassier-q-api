@@ -13,11 +13,14 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -38,7 +41,7 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    @Operation(summary = "Masuk dengan email & kata sandi")
+    @Operation(summary = "Masuk dengan username & kata sandi")
     public AuthResponse login(@Valid @RequestBody LoginRequest request) {
         return authService.login(request);
     }
@@ -53,6 +56,25 @@ public class AuthController {
     @Operation(summary = "Cabut refresh token (logout)")
     public ResponseEntity<Void> logout(@Valid @RequestBody RefreshRequest request) {
         authService.logout(request);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/logout-all")
+    @SecurityRequirement(name = "bearerAuth")
+    @Operation(summary = "Logout dari semua device: cabut semua sesi access token & refresh token milik akun ini, berlaku seketika")
+    public ResponseEntity<Void> logoutAll(@AuthenticationPrincipal AppUserPrincipal principal) {
+        authService.logoutAllDevices(principal.getUserId());
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/revoke/{userId}")
+    @SecurityRequirement(name = "bearerAuth")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO')")
+    @Operation(summary = "Paksa logout user lain (SUPERADMIN: siapa saja; KEPALA_TOKO: hanya staf di toko sendiri)")
+    public ResponseEntity<Void> revoke(
+            @AuthenticationPrincipal AppUserPrincipal principal,
+            @PathVariable UUID userId) {
+        authService.revokeUserSessions(principal, userId);
         return ResponseEntity.noContent().build();
     }
 
