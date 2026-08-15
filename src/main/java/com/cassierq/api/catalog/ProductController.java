@@ -2,6 +2,8 @@ package com.cassierq.api.catalog;
 
 import com.cassierq.api.catalog.dto.ProductRequest;
 import com.cassierq.api.catalog.dto.ProductResponse;
+import com.cassierq.api.catalog.dto.ProductUnitResponse;
+import com.cassierq.api.catalog.dto.RegisterProductUnitRequest;
 import com.cassierq.api.catalog.dto.UnitConversionResponse;
 import com.cassierq.api.common.PageResponse;
 import com.cassierq.api.security.AppUserPrincipal;
@@ -10,6 +12,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
@@ -58,6 +61,21 @@ public class ProductController {
             @RequestParam UUID unitId,
             @RequestParam BigDecimal quantity) {
         return productService.convert(id, unitId, quantity);
+    }
+
+    @GetMapping("/{id}/units")
+    @Operation(summary = "Daftar satuan yang berlaku untuk produk ini (satuan dasar + alternatif)")
+    public List<ProductUnitResponse> listUnits(@PathVariable UUID id) {
+        return productService.listUnits(id);
+    }
+
+    @PostMapping("/{id}/units")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
+    @Operation(summary = "Daftarkan satuan alternatif + rasio konversinya untuk produk ini (pasangan tulis dari /convert)")
+    public ResponseEntity<ProductUnitResponse> registerUnit(
+            @PathVariable UUID id,
+            @Valid @RequestBody RegisterProductUnitRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(productService.registerUnit(id, request));
     }
 
     @PostMapping

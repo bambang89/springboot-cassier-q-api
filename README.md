@@ -197,7 +197,9 @@ box for however the cashier types it in (including scan-pasting a barcode).
 | DELETE | `/api/v1/categories/{id}` | bearer, PRODUCT/SUPERADMIN | 409 if products still reference it |
 | GET | `/api/v1/products` | bearer | paginated, `?search=`; price/stock scoped to caller's store |
 | GET | `/api/v1/products/barcode/{barcode}` | bearer | used by the mobile app's scanner |
-| GET | `/api/v1/products/{id}/convert` | bearer | `?unitId=&quantity=` — converts to base units via `product_unit_conversions` (e.g. "3 DUS" → `quantityBaseUnit: 72`); 400 if that unit isn't registered for the product. Read-only preview of the same conversion Sales/Purchase Orders apply internally. |
+| GET | `/api/v1/products/{id}/units` | bearer | every unit registered for the product (base unit, conversion 1, plus any alternates) |
+| POST | `/api/v1/products/{id}/units` | bearer, SUPERADMIN/KEPALA_TOKO/PRODUCT | body: `unitId`, `conversionToBase`, `purchaseUnit?`, `saleUnit?` (both default `true`). The write-side counterpart of `/convert` below — 409 if that unit's already registered (including re-registering the base unit, whose conversion-1 row is fixed at product creation) |
+| GET | `/api/v1/products/{id}/convert` | bearer | `?unitId=&quantity=` — converts to base units via `product_unit_conversions` (e.g. "3 DUS" → `quantityBaseUnit: 72`); 400 if that unit isn't registered for the product (register it above first). Read-only preview of the same conversion Sales/Purchase Orders apply internally. |
 | POST | `/api/v1/products` | bearer, PRODUCT/SUPERADMIN | body includes optional `imageUrl`; also creates price + zero stock for caller's store |
 | PUT | `/api/v1/products/{id}` | bearer, PRODUCT/SUPERADMIN | a changed price closes the old `product_prices` row and opens a new one (history preserved) |
 | DELETE | `/api/v1/products/{id}` | bearer, PRODUCT/SUPERADMIN | soft delete (`deleted_at` + status `INACTIVE`) — past sales still reference the row |

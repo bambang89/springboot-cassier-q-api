@@ -2,6 +2,8 @@ package com.cassierq.api.catalog;
 
 import com.cassierq.api.catalog.dto.ProductRequest;
 import com.cassierq.api.catalog.dto.ProductResponse;
+import com.cassierq.api.catalog.dto.ProductUnitResponse;
+import com.cassierq.api.catalog.dto.RegisterProductUnitRequest;
 import com.cassierq.api.catalog.dto.UnitConversionResponse;
 import com.cassierq.api.common.PageResponse;
 import com.cassierq.api.common.exception.BadRequestException;
@@ -26,6 +28,7 @@ import com.cassierq.api.domain.repository.UserRepository;
 import com.cassierq.api.security.AppUserPrincipal;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -179,6 +182,49 @@ public class ProductService {
                 product.getBaseUnit().getUnitName(),
                 conversion.getConversionToBase(),
                 quantityBaseUnit);
+    }
+
+    /** Every unit registered for a product — the base unit (conversion 1) plus any alternates. */
+    @Transactional(readOnly = true)
+    public List<ProductUnitResponse> listUnits(UUID productId) {
+        if (!productRepository.existsById(productId)) {
+            throw new ResourceNotFoundException("Produk tidak ditemukan");
+        }
+        return conversionRepository.findByProductId(productId).stream()
+                .map(ProductUnitResponse::from)
+                .toList();
+    }
+
+    /**
+     * Registers an additional unit a product can be bought/sold in — the
+     * write-side counterpart of {@link #convert}. The base unit's
+     * conversion (1, set at product creation) can't be re-registered here.
+     */
+    @Transactional
+    public ProductUnitResponse registerUnit(UUID productId, RegisterProductUnitRequest request) {
+        Product product = productRepository.findById(productId)
+                .filter(p -> p.getDeletedAt() == null)
+                .orElseThrow(() -> new ResourceNotFoundException("Produk tidak ditemukan"));
+        Unit unit = unitRepository.findById(request.unitId())
+                .orElseThrow(() -> new ResourceNotFoundException("Satuan tidak ditemukan"));
+
+        if (product.getBaseUnit().getId().equals(unit.getId())) {
+            throw new ConflictException("Satuan ini sudah jadi satuan dasar produk (konversi 1) sejak produk dibuat");
+        }
+        if (conversionRepository.findByProductIdAndUnitId(productId, unit.getId()).isPresent()) {
+            throw new ConflictException("Satuan ini sudah terdaftar untuk produk ini");
+        }
+
+        ProductUnitConversion conversion = conversionRepository.save(ProductUnitConversion.builder()
+                .product(product)
+                .unit(unit)
+                .conversionToBase(request.conversionToBase())
+                .baseUnit(false)
+                .purchaseUnit(request.purchaseUnit() == null || request.purchaseUnit())
+                .saleUnit(request.saleUnit() == null || request.saleUnit())
+                .build());
+
+        return ProductUnitResponse.from(conversion);
     }
 
     @Transactional
