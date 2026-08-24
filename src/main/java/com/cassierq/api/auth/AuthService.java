@@ -127,7 +127,7 @@ public class AuthService {
         authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.username(), request.password()));
 
-        User user = userRepository.findByUsernameIgnoreCase(request.username())
+        User user = userRepository.findByUsernameIgnoreCaseOrEmailIgnoreCase(request.username(), request.username())
                 .orElseThrow(() -> new ResourceNotFoundException("User tidak ditemukan"));
 
         user.setLastLoginAt(Instant.now());

@@ -53,7 +53,7 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    @Operation(summary = "Masuk dengan username & kata sandi")
+    @Operation(summary = "Masuk dengan username/email & kata sandi")
     public AuthResponse login(
             @Valid @RequestBody LoginRequest request,
             @RequestHeader(value = HEADER_DEVICE_ID, required = false) String deviceId,
