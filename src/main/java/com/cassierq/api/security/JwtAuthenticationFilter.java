@@ -45,7 +45,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             if (claims.isPresent()) {
                 JwtService.AccessTokenClaims c = claims.get();
                 String deviceId = request.getHeader(DEVICE_ID_HEADER);
-                if (!isDeviceRecognized(c.userId(), deviceId)) {
+                boolean deviceIdSent = deviceId != null && !deviceId.isBlank();
+                if (deviceIdSent && !isDeviceRecognized(c.userId(), deviceId)) {
                     writeDeviceError(response, deviceId);
                     return; // short-circuit — never reaches a controller
                 }
@@ -69,18 +70,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     }
 
     private boolean isDeviceRecognized(UUID userId, String deviceId) {
-        return deviceId != null && !deviceId.isBlank()
-                && deviceRepository.findByUserIdAndDeviceId(userId, deviceId).isPresent();
+        return deviceRepository.findByUserIdAndDeviceId(userId, deviceId).isPresent();
     }
 
     private void writeDeviceError(HttpServletResponse response, String deviceId) throws IOException {
         response.setStatus(HttpStatus.UNAUTHORIZED.value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        String message = (deviceId == null || deviceId.isBlank())
-                ? "Header X-Device-Id wajib diisi"
-                : "Device ID tidak dikenali untuk akun ini";
         String body = """
-                {"timestamp":"%s","status":401,"code":"DEVICE_MISMATCH","message":"%s"}""".formatted(Instant.now(), message);
+                {"timestamp":"%s","status":401,"code":"DEVICE_MISMATCH","message":"Device ID tidak dikenali untuk akun ini"}"""
+                .formatted(Instant.now());
         response.getWriter().write(body);
     }
 }

@@ -51,14 +51,12 @@ public class ProductService {
 
     @Transactional(readOnly = true)
     public PageResponse<ProductResponse> search(String search, UUID storeId, Pageable pageable) {
-        requireStore(storeId);
         Page<Product> products = productRepository.search(search, pageable);
         return PageResponse.of(products.map(p -> toResponse(p, storeId)));
     }
 
     @Transactional(readOnly = true)
     public ProductResponse getByBarcode(String barcode, UUID storeId) {
-        requireStore(storeId);
         Product product = productRepository.findByBarcodeAndDeletedAtIsNull(barcode)
                 .orElseThrow(() -> new ResourceNotFoundException("Produk dengan barcode tersebut tidak ditemukan"));
         return toResponse(product, storeId);
@@ -154,13 +152,7 @@ public class ProductService {
         return toResponse(product, storeId);
     }
 
-    /**
-     * Converts a quantity in some unit to base units for a product — e.g.
-     * "2 DUS of this product is how many PCS?". Same conversion factor
-     * lookup Sales/Purchase Orders use internally, exposed standalone so a
-     * client can preview it (e.g. show "= 24 pcs" while the cashier is
-     * still typing) without actually creating an order.
-     */
+   
     @Transactional(readOnly = true)
     public UnitConversionResponse convert(UUID productId, UUID unitId, BigDecimal quantity) {
         Product product = productRepository.findById(productId)
@@ -195,11 +187,6 @@ public class ProductService {
                 .toList();
     }
 
-    /**
-     * Registers an additional unit a product can be bought/sold in — the
-     * write-side counterpart of {@link #convert}. The base unit's
-     * conversion (1, set at product creation) can't be re-registered here.
-     */
     @Transactional
     public ProductUnitResponse registerUnit(UUID productId, RegisterProductUnitRequest request) {
         Product product = productRepository.findById(productId)
