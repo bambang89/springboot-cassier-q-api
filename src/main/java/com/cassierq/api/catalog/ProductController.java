@@ -1,5 +1,6 @@
 package com.cassierq.api.catalog;
 
+import com.cassierq.api.catalog.dto.ProductImageResponse;
 import com.cassierq.api.catalog.dto.ProductRequest;
 import com.cassierq.api.catalog.dto.ProductResponse;
 import com.cassierq.api.catalog.dto.ProductUnitResponse;
@@ -29,6 +30,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/v1/products")
@@ -95,6 +97,40 @@ public class ProductController {
             @PathVariable UUID id,
             @Valid @RequestBody ProductRequest request) {
         return productService.update(id, request, principal);
+    }
+
+    @PostMapping(value = "/{id}/photo", consumes = "multipart/form-data")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'PRODUCT')")
+    @Operation(summary = "Upload/ganti foto produk (JPG/PNG/WEBP, maks 5MB)")
+    public ProductResponse uploadPhoto(
+            @AuthenticationPrincipal AppUserPrincipal principal,
+            @PathVariable UUID id,
+            @RequestParam("file") MultipartFile file) {
+        return productService.uploadPhoto(id, file, principal.getPrimaryStoreId());
+    }
+
+    @GetMapping("/{id}/photos")
+    @Operation(summary = "Daftar foto galeri produk (di luar foto utama)")
+    public List<ProductImageResponse> listPhotos(@PathVariable UUID id) {
+        return productService.listPhotos(id);
+    }
+
+    @PostMapping(value = "/{id}/photos", consumes = "multipart/form-data")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'PRODUCT')")
+    @Operation(summary = "Tambah foto ke galeri produk (JPG/PNG/WEBP, maks 5MB)")
+    public ResponseEntity<ProductImageResponse> addPhoto(
+            @AuthenticationPrincipal AppUserPrincipal principal,
+            @PathVariable UUID id,
+            @RequestParam("file") MultipartFile file) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(productService.addPhoto(id, file, principal));
+    }
+
+    @DeleteMapping("/{id}/photos/{photoId}")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'PRODUCT')")
+    @Operation(summary = "Hapus salah satu foto galeri produk")
+    public ResponseEntity<Void> deletePhoto(@PathVariable UUID id, @PathVariable UUID photoId) {
+        productService.deletePhoto(id, photoId);
+        return ResponseEntity.noContent().build();
     }
 
     @DeleteMapping("/{id}")

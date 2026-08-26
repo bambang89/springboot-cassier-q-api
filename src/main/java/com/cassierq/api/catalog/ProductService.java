@@ -1,5 +1,6 @@
 package com.cassierq.api.catalog;
 
+import com.cassierq.api.catalog.dto.ProductImageResponse;
 import com.cassierq.api.catalog.dto.ProductRequest;
 import com.cassierq.api.catalog.dto.ProductResponse;
 import com.cassierq.api.catalog.dto.ProductUnitResponse;
@@ -9,9 +10,11 @@ import com.cassierq.api.common.PageResponse;
 import com.cassierq.api.common.exception.BadRequestException;
 import com.cassierq.api.common.exception.ConflictException;
 import com.cassierq.api.common.exception.ResourceNotFoundException;
+import com.cassierq.api.common.storage.FileStorageService;
 import com.cassierq.api.domain.entity.Inventory;
 import com.cassierq.api.domain.entity.Product;
 import com.cassierq.api.domain.entity.ProductCategory;
+import com.cassierq.api.domain.entity.ProductImage;
 import com.cassierq.api.domain.entity.ProductPrice;
 import com.cassierq.api.domain.entity.ProductUnitConversion;
 import com.cassierq.api.domain.entity.Store;
@@ -19,6 +22,7 @@ import com.cassierq.api.domain.entity.Unit;
 import com.cassierq.api.domain.entity.User;
 import com.cassierq.api.domain.repository.InventoryRepository;
 import com.cassierq.api.domain.repository.ProductCategoryRepository;
+import com.cassierq.api.domain.repository.ProductImageRepository;
 import com.cassierq.api.domain.repository.ProductPriceRepository;
 import com.cassierq.api.domain.repository.ProductRepository;
 import com.cassierq.api.domain.repository.ProductUnitConversionRepository;
@@ -35,6 +39,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 @Service
 @RequiredArgsConstructor
@@ -48,6 +54,8 @@ public class ProductService {
     private final InventoryRepository inventoryRepository;
     private final StoreRepository storeRepository;
     private final UserRepository userRepository;
+    private final FileStorageService fileStorageService;
+    private final ProductImageRepository productImageRepository;
 
     @Transactional(readOnly = true)
     public PageResponse<ProductResponse> search(String search, UUID storeId, Pageable pageable) {
@@ -152,7 +160,65 @@ public class ProductService {
         return toResponse(product, storeId);
     }
 
-   
+    @Transactional
+    public ProductResponse uploadPhoto(UUID id, MultipartFile file, UUID storeId) {
+        Product product = productRepository.findById(id)
+                .filter(p -> p.getDeletedAt() == null)
+                .orElseThrow(() -> new ResourceNotFoundException("Produk tidak ditemukan"));
+
+        String relativePath = fileStorageService.storeImage("products/" + id, file);
+        String publicUrl = ServletUriComponentsBuilder.fromCurrentContextPath()
+                .path("/uploads/")
+                .path(relativePath)
+                .toUriString();
+
+        product.setImageUrl(publicUrl);
+        productRepository.save(product);
+
+        return toResponse(product, storeId);
+    }
+
+    /** Galeri foto tambahan produk, di luar `imageUrl` (foto utama) — lihat {@link #uploadPhoto}. */
+    @Transactional(readOnly = true)
+    public List<ProductImageResponse> listPhotos(UUID productId) {
+        if (!productRepository.existsById(productId)) {
+            throw new ResourceNotFoundException("Produk tidak ditemukan");
+        }
+        return productImageRepository.findByProductIdOrderBySortOrderAscCreatedAtAsc(productId).stream()
+                .map(ProductImageResponse::from)
+                .toList();
+    }
+
+    @Transactional
+    public ProductImageResponse addPhoto(UUID productId, MultipartFile file, AppUserPrincipal principal) {
+        Product product = productRepository.findById(productId)
+                .filter(p -> p.getDeletedAt() == null)
+                .orElseThrow(() -> new ResourceNotFoundException("Produk tidak ditemukan"));
+
+        String relativePath = fileStorageService.storeImage("products/" + productId, file);
+        String publicUrl = ServletUriComponentsBuilder.fromCurrentContextPath()
+                .path("/uploads/")
+                .path(relativePath)
+                .toUriString();
+
+        ProductImage image = productImageRepository.save(ProductImage.builder()
+                .product(product)
+                .imageUrl(publicUrl)
+                .sortOrder((int) productImageRepository.countByProductId(productId))
+                .createdBy(userRepository.getReferenceById(principal.getUserId()))
+                .build());
+
+        return ProductImageResponse.from(image);
+    }
+
+    @Transactional
+    public void deletePhoto(UUID productId, UUID photoId) {
+        ProductImage image = productImageRepository.findById(photoId)
+                .filter(img -> img.getProduct().getId().equals(productId))
+                .orElseThrow(() -> new ResourceNotFoundException("Foto tidak ditemukan"));
+        productImageRepository.delete(image);
+    }
+
     @Transactional(readOnly = true)
     public UnitConversionResponse convert(UUID productId, UUID unitId, BigDecimal quantity) {
         Product product = productRepository.findById(productId)
