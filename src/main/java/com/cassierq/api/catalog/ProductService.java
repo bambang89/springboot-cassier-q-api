@@ -46,6 +46,8 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 @RequiredArgsConstructor
 public class ProductService {
 
+    private static final int MAX_PRODUCT_PHOTOS = 5;
+
     private final ProductRepository productRepository;
     private final ProductCategoryRepository categoryRepository;
     private final UnitRepository unitRepository;
@@ -195,6 +197,11 @@ public class ProductService {
                 .filter(p -> p.getDeletedAt() == null)
                 .orElseThrow(() -> new ResourceNotFoundException("Produk tidak ditemukan"));
 
+        long existingCount = productImageRepository.countByProductId(productId);
+        if (existingCount >= MAX_PRODUCT_PHOTOS) {
+            throw new ConflictException("Maksimal " + MAX_PRODUCT_PHOTOS + " foto per produk");
+        }
+
         String relativePath = fileStorageService.storeImage("products/" + productId, file);
         String publicUrl = ServletUriComponentsBuilder.fromCurrentContextPath()
                 .path("/uploads/")
@@ -204,7 +211,7 @@ public class ProductService {
         ProductImage image = productImageRepository.save(ProductImage.builder()
                 .product(product)
                 .imageUrl(publicUrl)
-                .sortOrder((int) productImageRepository.countByProductId(productId))
+                .sortOrder((int) existingCount)
                 .createdBy(userRepository.getReferenceById(principal.getUserId()))
                 .build());
 
