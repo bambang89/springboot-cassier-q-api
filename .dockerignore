@@ -1,0 +1,11 @@
+.git
+.mvn
+target
+uploads
+deferred-phase2
+deploy
+*.md
+.idea
+.vscode
+Jenkinsfile
+Dockerfile

@@ -31,3 +31,6 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Uploaded files (see app.upload.base-dir) ###
+/uploads/

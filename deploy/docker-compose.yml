@@ -1,0 +1,19 @@
+services:
+  api:
+    image: localhost:5000/cassier-q-api:${IMAGE_TAG:-latest}
+    container_name: cassier-q-api
+    restart: always
+    env_file: .env
+    ports:
+      # 8080 on the host is taken by Jenkins
+      - "127.0.0.1:8081:8080"
+    volumes:
+      - uploads:/app/uploads
+    networks: [dbnet]
+
+volumes:
+  uploads:
+
+networks:
+  dbnet:
+    external: true
