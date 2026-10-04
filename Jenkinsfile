@@ -37,13 +37,12 @@ pipeline {
       when { buildingTag() }
       steps {
         sh '''
-          if [ ! -f $DEPLOY_DIR/docker-compose.yml ]; then
-            echo "Skip deploy: $DEPLOY_DIR/docker-compose.yml belum ada"
+          if [ ! -x $DEPLOY_DIR/deploy.sh ]; then
+            echo "Skip deploy: $DEPLOY_DIR/deploy.sh belum ada"
             exit 0
           fi
-          cd $DEPLOY_DIR
-          IMAGE_TAG=$IMAGE_TAG docker compose up -d
-          docker compose ps
+          # Blue-green, zero downtime (see deploy/deploy.sh)
+          $DEPLOY_DIR/deploy.sh $IMAGE_TAG
         '''
       }
     }
