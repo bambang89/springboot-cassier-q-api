@@ -90,10 +90,16 @@ public class AuthService {
         if (employeeRepository.existsByEmployeeCodeIgnoreCase(request.username())) {
             throw new ConflictException("Username sudah terdaftar");
         }
+        if (storeRepository.existsByStoreCodeIgnoreCase(request.storeCode())) {
+            throw new ConflictException("Kode toko sudah dipakai");
+        }
 
         Store store = storeRepository.save(Store.builder()
                 .storeCode(request.storeCode())
                 .storeName(request.storeName())
+                .address(blankToNull(request.address()))
+                .city(blankToNull(request.city()))
+                .phone(blankToNull(request.phone()))
                 .status("ACTIVE")
                 .build());
         provisionNumberSequences(store);
@@ -262,6 +268,10 @@ public class AuthService {
         // Password direset karena mungkin bocor: semua sesi (access token
         // 24 jam juga, bukan cuma refresh token) langsung mati.
         revokeAllSessions(user.getId());
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     /**

@@ -27,5 +27,15 @@ public record RegisterRequest(
 
         @NotBlank(message = "Kata sandi wajib diisi")
         @Size(min = 8, message = "Kata sandi minimal 8 karakter")
-        String password) {
+        String password,
+
+        // Opsional — profil toko bisa dilengkapi belakangan di menu Outlet.
+        @Size(max = 255)
+        String address,
+
+        @Size(max = 100)
+        String city,
+
+        @Size(max = 30)
+        String phone) {
 }
