@@ -14,19 +14,21 @@ public interface SalesTransactionRepository extends JpaRepository<SalesTransacti
 
     Optional<SalesTransaction> findByIdAndStoreId(UUID id, UUID storeId);
 
+    Optional<SalesTransaction> findByStoreIdAndIdempotencyKey(UUID storeId, String idempotencyKey);
+
     Page<SalesTransaction> findByStoreIdOrderByTransactionDateDesc(UUID storeId, Pageable pageable);
 
     @Query("""
             select count(t) from SalesTransaction t
             where t.store.id = :storeId and t.transactionStatus = 'PAID'
-              and t.transactionDate between :from and :to
+              and t.transactionDate >= :from and t.transactionDate < :to
             """)
     long countPaid(UUID storeId, Instant from, Instant to);
 
     @Query("""
             select coalesce(sum(t.grandTotal), 0) from SalesTransaction t
             where t.store.id = :storeId and t.transactionStatus = 'PAID'
-              and t.transactionDate between :from and :to
+              and t.transactionDate >= :from and t.transactionDate < :to
             """)
     BigDecimal sumGrandTotalPaid(UUID storeId, Instant from, Instant to);
 }

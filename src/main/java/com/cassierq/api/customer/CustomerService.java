@@ -96,7 +96,13 @@ public class CustomerService {
 
     @Transactional
     public CustomerResponse recordPayment(AppUserPrincipal principal, UUID customerId, RecordPaymentRequest request, User actor) {
-        Customer customer = requireCustomer(principal, customerId);
+        Customer customer = customerRepository.findForUpdate(customerId, requireStore(principal))
+                .orElseThrow(() -> new ResourceNotFoundException("Pelanggan tidak ditemukan"));
+
+        BigDecimal balance = ledgerRepository.balanceOf(customerId);
+        if (request.amount().compareTo(balance) > 0) {
+            throw new BadRequestException("Pembayaran melebihi sisa utang pelanggan (sisa " + balance.toPlainString() + ")");
+        }
 
         ledgerRepository.save(CustomerLedgerEntry.builder()
                 .customer(customer)
@@ -118,6 +124,7 @@ public class CustomerService {
      */
     @Transactional
     public void recordDebtForSale(Customer customer, BigDecimal amount, SalesTransaction transaction, User actor) {
+        customerRepository.findForUpdate(customer.getId(), customer.getStore().getId());
         BigDecimal currentBalance = ledgerRepository.balanceOf(customer.getId());
         BigDecimal newBalance = currentBalance.add(amount);
         if (customer.getCreditLimit() != null && newBalance.compareTo(customer.getCreditLimit()) > 0) {

@@ -16,7 +16,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/** Maps to the pre-existing `product_categories` table. Global catalog — not store-scoped. */
+/** Maps to the pre-existing `product_categories` table. Owned by a root store (owner_store_id), shared with its branches. */
 @Entity
 @Table(name = "product_categories")
 @Getter
@@ -30,8 +30,11 @@ public class ProductCategory extends Auditable {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(name = "category_code", nullable = false, unique = true, length = 40)
+    @Column(name = "category_code", nullable = false, length = 40)
     private String categoryCode;
+
+    @Column(name = "owner_store_id")
+    private UUID ownerStoreId;
 
     @Column(name = "category_name", nullable = false, length = 200)
     private String categoryName;

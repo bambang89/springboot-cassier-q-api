@@ -8,10 +8,12 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
+import com.cassierq.api.security.AppUserPrincipal;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -25,36 +27,41 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/units")
 @RequiredArgsConstructor
 @SecurityRequirement(name = "bearerAuth")
-@Tag(name = "Units", description = "Satuan produk (pcs, dus, kg, ...) — katalog global, tidak per-toko")
+@Tag(name = "Units", description = "Satuan produk (pcs, dus, kg, ...) — milik toko induk, dipakai bersama cabangnya")
 public class UnitController {
 
     private final UnitService unitService;
 
     @GetMapping
     @Operation(summary = "Daftar semua satuan")
-    public List<UnitResponse> list() {
-        return unitService.list();
+    public List<UnitResponse> list(@AuthenticationPrincipal AppUserPrincipal principal) {
+        return unitService.list(principal);
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'PRODUCT')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
     @Operation(summary = "Buat satuan baru")
-    public ResponseEntity<UnitResponse> create(@Valid @RequestBody UnitRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(unitService.create(request));
+    public ResponseEntity<UnitResponse> create(
+            @AuthenticationPrincipal AppUserPrincipal principal,
+            @Valid @RequestBody UnitRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(unitService.create(principal, request));
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'PRODUCT')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
     @Operation(summary = "Perbarui satuan")
-    public UnitResponse update(@PathVariable UUID id, @Valid @RequestBody UnitRequest request) {
-        return unitService.update(id, request);
+    public UnitResponse update(
+            @AuthenticationPrincipal AppUserPrincipal principal,
+            @PathVariable UUID id,
+            @Valid @RequestBody UnitRequest request) {
+        return unitService.update(principal, id, request);
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'PRODUCT')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
     @Operation(summary = "Hapus satuan (gagal 409 jika masih dipakai produk)")
-    public ResponseEntity<Void> delete(@PathVariable UUID id) {
-        unitService.delete(id);
+    public ResponseEntity<Void> delete(@AuthenticationPrincipal AppUserPrincipal principal, @PathVariable UUID id) {
+        unitService.delete(principal, id);
         return ResponseEntity.noContent().build();
     }
 }

@@ -10,13 +10,15 @@ public interface SalesTransactionItemRepository extends JpaRepository<SalesTrans
 
     List<SalesTransactionItem> findByTransactionId(UUID transactionId);
 
+    List<SalesTransactionItem> findByTransactionIdIn(java.util.Collection<UUID> transactionIds);
+
     @Query("""
             select i.product.id as productId, i.product.productName as productName,
                    sum(i.quantityBaseUnit) as totalQuantity, sum(i.subtotal) as totalRevenue
             from SalesTransactionItem i
             where i.transaction.store.id = :storeId
               and i.transaction.transactionStatus = 'PAID'
-              and i.transaction.transactionDate between :from and :to
+              and i.transaction.transactionDate >= :from and i.transaction.transactionDate < :to
             group by i.product.id, i.product.productName
             order by sum(i.quantityBaseUnit) desc
             """)

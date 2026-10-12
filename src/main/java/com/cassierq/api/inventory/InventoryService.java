@@ -1,7 +1,7 @@
 package com.cassierq.api.inventory;
 
+import com.cassierq.api.catalog.CatalogScope;
 import com.cassierq.api.common.exception.BadRequestException;
-import com.cassierq.api.common.exception.ResourceNotFoundException;
 import com.cassierq.api.domain.entity.Inventory;
 import com.cassierq.api.domain.entity.Product;
 import com.cassierq.api.domain.entity.ProductUnitConversion;
@@ -9,11 +9,9 @@ import com.cassierq.api.domain.entity.StockMovement;
 import com.cassierq.api.domain.entity.Unit;
 import com.cassierq.api.domain.entity.User;
 import com.cassierq.api.domain.repository.InventoryRepository;
-import com.cassierq.api.domain.repository.ProductRepository;
 import com.cassierq.api.domain.repository.ProductUnitConversionRepository;
 import com.cassierq.api.domain.repository.StockMovementRepository;
 import com.cassierq.api.domain.repository.StoreRepository;
-import com.cassierq.api.domain.repository.UnitRepository;
 import com.cassierq.api.domain.repository.UserRepository;
 import com.cassierq.api.inventory.dto.RestockRequest;
 import com.cassierq.api.inventory.dto.StockResponse;
@@ -29,8 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class InventoryService {
 
-    private final ProductRepository productRepository;
-    private final UnitRepository unitRepository;
+    private final CatalogScope catalogScope;
     private final ProductUnitConversionRepository conversionRepository;
     private final InventoryRepository inventoryRepository;
     private final StockMovementRepository stockMovementRepository;
@@ -47,11 +44,9 @@ public class InventoryService {
     public StockResponse restock(UUID productId, RestockRequest request, AppUserPrincipal principal) {
         UUID storeId = requireStore(principal);
 
-        Product product = productRepository.findById(productId)
-                .filter(p -> p.getDeletedAt() == null)
-                .orElseThrow(() -> new ResourceNotFoundException("Produk tidak ditemukan"));
-        Unit unit = unitRepository.findById(request.unitId())
-                .orElseThrow(() -> new ResourceNotFoundException("Satuan tidak ditemukan"));
+        UUID catalogOwner = catalogScope.ownerOf(principal);
+        Product product = catalogScope.product(productId, catalogOwner);
+        Unit unit = catalogScope.unit(request.unitId(), catalogOwner);
         ProductUnitConversion conversion = conversionRepository.findByProductIdAndUnitId(productId, unit.getId())
                 .orElseThrow(() -> new BadRequestException("Satuan tersebut tidak berlaku untuk produk " + product.getProductName()));
 
@@ -63,7 +58,7 @@ public class InventoryService {
         Instant now = Instant.now();
 
         if (inventory == null) {
-            // First time this store carries this (global) product.
+            // First time this store carries this catalog product.
             inventory = Inventory.builder()
                     .store(storeRepository.getReferenceById(storeId))
                     .product(product)

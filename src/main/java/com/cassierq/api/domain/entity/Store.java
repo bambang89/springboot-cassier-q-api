@@ -49,6 +49,10 @@ public class Store extends Auditable {
     @Builder.Default
     private String status = "ACTIVE";
 
+    /** Toko induk pemilik katalog; null = toko ini sendiri induknya. Lihat CatalogScope. */
+    @Column(name = "parent_store_id")
+    private UUID parentStoreId;
+
     @Column(name = "is_head_office", nullable = false)
     @Builder.Default
     private boolean headOffice = false;

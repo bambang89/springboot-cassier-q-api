@@ -34,3 +34,6 @@ build/
 
 ### Uploaded files (see app.upload.base-dir) ###
 /uploads/
+
+### Local profile (contains DB credentials) ###
+/config/application-local.yml

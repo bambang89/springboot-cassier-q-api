@@ -10,8 +10,12 @@ import org.springframework.data.jpa.repository.Query;
 public interface UserSessionRepository extends JpaRepository<UserSession, UUID> {
 
     Optional<UserSession> findByJti(String jti);
-    
+
     @Modifying
     @Query("update UserSession s set s.revoked = true where s.user.id = :userId and s.revoked = false")
     void revokeAllByUserId(UUID userId);
+
+    @Modifying
+    @Query("update UserSession s set s.revoked = true where s.user.id = :userId and s.revoked = false and s.jti <> :keepJti")
+    void revokeAllByUserIdExcept(UUID userId, String keepJti);
 }

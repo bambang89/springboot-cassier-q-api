@@ -1,5 +1,6 @@
 package com.cassierq.api.catalog.dto;
 
+import com.cassierq.api.common.storage.PublicUrls;
 import com.cassierq.api.domain.entity.Product;
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -31,7 +32,7 @@ public record ProductResponse(
                 product.getCategory().getCategoryName(),
                 product.getBrand(),
                 product.getDescription(),
-                product.getImageUrl(),
+                PublicUrls.resolve(product.getImageUrl()),
                 product.getBaseUnit().getId(),
                 product.getBaseUnit().getUnitName(),
                 product.getStatus(),

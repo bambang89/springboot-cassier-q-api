@@ -28,8 +28,11 @@ public class Unit {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(name = "unit_code", nullable = false, unique = true, length = 40)
+    @Column(name = "unit_code", nullable = false, length = 40)
     private String unitCode;
+
+    @Column(name = "owner_store_id")
+    private UUID ownerStoreId;
 
     @Column(name = "unit_name", nullable = false, length = 100)
     private String unitName;

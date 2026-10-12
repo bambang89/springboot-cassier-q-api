@@ -13,7 +13,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/** Maps to the pre-existing `suppliers` table. Global (no store_id), like products. */
+/** Maps to the pre-existing `suppliers` table. Owned by a root store (owner_store_id), like products. */
 @Entity
 @Table(name = "suppliers")
 @Getter
@@ -27,8 +27,11 @@ public class Supplier extends Auditable {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(name = "supplier_code", nullable = false, unique = true, length = 20)
+    @Column(name = "supplier_code", nullable = false, length = 20)
     private String supplierCode;
+
+    @Column(name = "owner_store_id")
+    private UUID ownerStoreId;
 
     @Column(name = "supplier_name", nullable = false, length = 150)
     private String supplierName;

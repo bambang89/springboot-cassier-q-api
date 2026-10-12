@@ -1,5 +1,6 @@
 package com.cassierq.api.config;
 
+import com.cassierq.api.security.AuthRateLimitFilter;
 import com.cassierq.api.security.JwtAuthenticationFilter;
 import com.cassierq.api.security.RestAccessDeniedHandler;
 import com.cassierq.api.security.RestAuthenticationEntryPoint;
@@ -47,6 +48,7 @@ public class SecurityConfig {
     };
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final AuthRateLimitFilter authRateLimitFilter;
     private final RestAuthenticationEntryPoint restAuthenticationEntryPoint;
     private final RestAccessDeniedHandler restAccessDeniedHandler;
     private final CorsProperties corsProperties;
@@ -75,6 +77,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(PUBLIC_PATHS).permitAll()
                         .anyRequest().authenticated())
+                .addFilterBefore(authRateLimitFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
@@ -82,7 +85,9 @@ public class SecurityConfig {
 
     private CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(corsProperties.allowedOrigins());
+        // Patterns (bukan setAllowedOrigins) supaya "*" dari env tetap valid
+        // bersama allowCredentials — setAllowedOrigins("*") + credentials ditolak Spring.
+        configuration.setAllowedOriginPatterns(corsProperties.allowedOrigins());
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(true);

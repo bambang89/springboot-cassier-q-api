@@ -8,10 +8,12 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
+import com.cassierq.api.security.AppUserPrincipal;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -25,36 +27,41 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/suppliers")
 @RequiredArgsConstructor
 @SecurityRequirement(name = "bearerAuth")
-@Tag(name = "Suppliers", description = "Pemasok barang (katalog global, tidak per-toko)")
+@Tag(name = "Suppliers", description = "Pemasok barang (milik toko induk, dipakai bersama cabangnya)")
 public class SupplierController {
 
     private final SupplierService supplierService;
 
     @GetMapping
     @Operation(summary = "Daftar semua supplier")
-    public List<SupplierResponse> list() {
-        return supplierService.list();
+    public List<SupplierResponse> list(@AuthenticationPrincipal AppUserPrincipal principal) {
+        return supplierService.list(principal);
     }
 
     @PostMapping
     @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'GUDANG')")
     @Operation(summary = "Tambah supplier baru")
-    public ResponseEntity<SupplierResponse> create(@Valid @RequestBody SupplierRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(supplierService.create(request));
+    public ResponseEntity<SupplierResponse> create(
+            @AuthenticationPrincipal AppUserPrincipal principal,
+            @Valid @RequestBody SupplierRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(supplierService.create(principal, request));
     }
 
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'GUDANG')")
     @Operation(summary = "Perbarui data supplier")
-    public SupplierResponse update(@PathVariable UUID id, @Valid @RequestBody SupplierRequest request) {
-        return supplierService.update(id, request);
+    public SupplierResponse update(
+            @AuthenticationPrincipal AppUserPrincipal principal,
+            @PathVariable UUID id,
+            @Valid @RequestBody SupplierRequest request) {
+        return supplierService.update(principal, id, request);
     }
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'GUDANG')")
     @Operation(summary = "Nonaktifkan supplier")
-    public ResponseEntity<Void> deactivate(@PathVariable UUID id) {
-        supplierService.deactivate(id);
+    public ResponseEntity<Void> deactivate(@AuthenticationPrincipal AppUserPrincipal principal, @PathVariable UUID id) {
+        supplierService.deactivate(principal, id);
         return ResponseEntity.noContent().build();
     }
 }

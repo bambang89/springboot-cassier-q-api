@@ -115,7 +115,7 @@ public class AuthController {
     public ResponseEntity<Void> changePassword(
             @AuthenticationPrincipal AppUserPrincipal principal,
             @Valid @RequestBody ChangePasswordRequest request) {
-        authService.changePassword(principal.getUserId(), request);
+        authService.changePassword(principal.getUserId(), principal.getJti(), request);
         return ResponseEntity.noContent().build();
     }
 

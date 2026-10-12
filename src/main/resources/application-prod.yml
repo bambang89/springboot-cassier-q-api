@@ -4,10 +4,23 @@ spring:
       hibernate:
         format_sql: false
 
+app:
+  jwt:
+    # Tanpa default di prod: kalau JWT_SECRET lupa di-set, app gagal start
+    # alih-alih diam-diam memakai secret dev yang ada di repo.
+    secret: ${JWT_SECRET}
+
 management:
   endpoint:
     health:
       show-details: never
+
+# Dokumentasi API tidak dibuka ke publik di prod.
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
 
 logging:
   level:

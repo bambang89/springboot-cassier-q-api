@@ -36,7 +36,7 @@ import org.springframework.web.multipart.MultipartFile;
 @RequestMapping("/api/v1/products")
 @RequiredArgsConstructor
 @SecurityRequirement(name = "bearerAuth")
-@Tag(name = "Products", description = "Produk (katalog global) + harga & stok pada toko user yang sedang login")
+@Tag(name = "Products", description = "Produk (katalog milik toko induk) + harga & stok pada toko user yang sedang login")
 public class ProductController {
 
     private final ProductService productService;
@@ -47,41 +47,43 @@ public class ProductController {
             @AuthenticationPrincipal AppUserPrincipal principal,
             @RequestParam(required = false) String search,
             Pageable pageable) {
-        return productService.search(search, principal.getPrimaryStoreId(), pageable);
+        return productService.search(search, principal, pageable);
     }
 
     @GetMapping("/barcode/{barcode}")
     @Operation(summary = "Cari produk berdasarkan barcode (dipakai scanner)")
     public ProductResponse getByBarcode(@AuthenticationPrincipal AppUserPrincipal principal, @PathVariable String barcode) {
-        return productService.getByBarcode(barcode, principal.getPrimaryStoreId());
+        return productService.getByBarcode(barcode, principal);
     }
 
     @GetMapping("/{id}/convert")
     @Operation(summary = "Konversi jumlah dari satuan lain ke satuan dasar produk (mis. 2 DUS = berapa PCS)")
     public UnitConversionResponse convert(
+            @AuthenticationPrincipal AppUserPrincipal principal,
             @PathVariable UUID id,
             @RequestParam UUID unitId,
             @RequestParam BigDecimal quantity) {
-        return productService.convert(id, unitId, quantity);
+        return productService.convert(id, unitId, quantity, principal);
     }
 
     @GetMapping("/{id}/units")
     @Operation(summary = "Daftar satuan yang berlaku untuk produk ini (satuan dasar + alternatif)")
-    public List<ProductUnitResponse> listUnits(@PathVariable UUID id) {
-        return productService.listUnits(id);
+    public List<ProductUnitResponse> listUnits(@AuthenticationPrincipal AppUserPrincipal principal, @PathVariable UUID id) {
+        return productService.listUnits(id, principal);
     }
 
     @PostMapping("/{id}/units")
     @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
     @Operation(summary = "Daftarkan satuan alternatif + rasio konversinya untuk produk ini (pasangan tulis dari /convert)")
     public ResponseEntity<ProductUnitResponse> registerUnit(
+            @AuthenticationPrincipal AppUserPrincipal principal,
             @PathVariable UUID id,
             @Valid @RequestBody RegisterProductUnitRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(productService.registerUnit(id, request));
+        return ResponseEntity.status(HttpStatus.CREATED).body(productService.registerUnit(id, request, principal));
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'PRODUCT')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
     @Operation(summary = "Buat produk baru (sekaligus harga & stok awal di toko user)")
     public ResponseEntity<ProductResponse> create(
             @AuthenticationPrincipal AppUserPrincipal principal,
@@ -90,7 +92,7 @@ public class ProductController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'PRODUCT')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
     @Operation(summary = "Perbarui produk (harga baru otomatis menutup harga lama)")
     public ProductResponse update(
             @AuthenticationPrincipal AppUserPrincipal principal,
@@ -100,23 +102,23 @@ public class ProductController {
     }
 
     @PostMapping(value = "/{id}/photo", consumes = "multipart/form-data")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'PRODUCT')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
     @Operation(summary = "Upload/ganti foto produk (JPG/PNG/WEBP, maks 5MB)")
     public ProductResponse uploadPhoto(
             @AuthenticationPrincipal AppUserPrincipal principal,
             @PathVariable UUID id,
             @RequestParam("file") MultipartFile file) {
-        return productService.uploadPhoto(id, file, principal.getPrimaryStoreId());
+        return productService.uploadPhoto(id, file, principal);
     }
 
     @GetMapping("/{id}/photos")
     @Operation(summary = "Daftar foto galeri produk (di luar foto utama)")
-    public List<ProductImageResponse> listPhotos(@PathVariable UUID id) {
-        return productService.listPhotos(id);
+    public List<ProductImageResponse> listPhotos(@AuthenticationPrincipal AppUserPrincipal principal, @PathVariable UUID id) {
+        return productService.listPhotos(id, principal);
     }
 
     @PostMapping(value = "/{id}/photos", consumes = "multipart/form-data")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'PRODUCT')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
     @Operation(summary = "Tambah foto ke galeri produk (JPG/PNG/WEBP, maks 5MB)")
     public ResponseEntity<ProductImageResponse> addPhoto(
             @AuthenticationPrincipal AppUserPrincipal principal,
@@ -126,18 +128,21 @@ public class ProductController {
     }
 
     @DeleteMapping("/{id}/photos/{photoId}")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'PRODUCT')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
     @Operation(summary = "Hapus salah satu foto galeri produk")
-    public ResponseEntity<Void> deletePhoto(@PathVariable UUID id, @PathVariable UUID photoId) {
-        productService.deletePhoto(id, photoId);
+    public ResponseEntity<Void> deletePhoto(
+            @AuthenticationPrincipal AppUserPrincipal principal,
+            @PathVariable UUID id,
+            @PathVariable UUID photoId) {
+        productService.deletePhoto(id, photoId, principal);
         return ResponseEntity.noContent().build();
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'PRODUCT')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
     @Operation(summary = "Nonaktifkan produk (soft delete)")
-    public ResponseEntity<Void> delete(@PathVariable UUID id) {
-        productService.delete(id);
+    public ResponseEntity<Void> delete(@AuthenticationPrincipal AppUserPrincipal principal, @PathVariable UUID id) {
+        productService.delete(id, principal);
         return ResponseEntity.noContent().build();
     }
 }

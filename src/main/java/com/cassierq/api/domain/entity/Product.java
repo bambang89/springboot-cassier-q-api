@@ -18,7 +18,8 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 /**
- * Maps to the pre-existing `products` table. Global catalog (no store_id) —
+ * Maps to the pre-existing `products` table. Catalog is owned by a root store
+ * ({@code owner_store_id}, shared with its branches — see CatalogScope);
  * price and stock are per-store, in {@link ProductPrice} / {@link Inventory}.
  */
 @Entity
@@ -34,8 +35,11 @@ public class Product extends Auditable {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(nullable = false, unique = true, length = 60)
+    @Column(nullable = false, length = 60)
     private String sku;
+
+    @Column(name = "owner_store_id")
+    private UUID ownerStoreId;
 
     @Column(length = 100)
     private String barcode;

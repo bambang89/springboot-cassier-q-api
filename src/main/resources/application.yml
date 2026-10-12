@@ -48,6 +48,9 @@ spring:
 
 server:
   port: ${PORT:8080}
+  # Di belakang nginx: pakai X-Forwarded-For/Proto (Tomcat RemoteIpValve, hanya
+  # dipercaya dari proxy internal) untuk IP klien (rate limit) & URL https foto.
+  forward-headers-strategy: native
 
 app:
   jwt:
@@ -64,6 +67,13 @@ app:
     ttl-minutes: ${PASSWORD_RESET_TTL_MINUTES:30}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:8081,http://localhost:19006,exp://localhost:19000}
+  business:
+    timezone: ${BUSINESS_TIMEZONE:Asia/Jakarta}
+    tax-rate: ${TAX_RATE:0.11}
+    # Diskon di atas persen ini (dari subtotal) hanya boleh SUPERADMIN/KEPALA_TOKO.
+    cashier-max-discount-percent: ${CASHIER_MAX_DISCOUNT_PERCENT:10}
+  rate-limit:
+    auth-per-minute: ${AUTH_RATE_LIMIT_PER_MINUTE:20}
   upload:
     # Folder di disk server tempat foto produk disimpan, diserve balik lewat
     # /uploads/** (lihat WebMvcConfig + FileStorageService). Untuk deploy di

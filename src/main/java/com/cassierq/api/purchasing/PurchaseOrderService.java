@@ -1,5 +1,6 @@
 package com.cassierq.api.purchasing;
 
+import com.cassierq.api.catalog.CatalogScope;
 import com.cassierq.api.common.NumberSequenceService;
 import com.cassierq.api.common.PageResponse;
 import com.cassierq.api.common.exception.BadRequestException;
@@ -15,14 +16,11 @@ import com.cassierq.api.domain.entity.Supplier;
 import com.cassierq.api.domain.entity.Unit;
 import com.cassierq.api.domain.entity.User;
 import com.cassierq.api.domain.repository.InventoryRepository;
-import com.cassierq.api.domain.repository.ProductRepository;
 import com.cassierq.api.domain.repository.ProductUnitConversionRepository;
 import com.cassierq.api.domain.repository.PurchaseOrderItemRepository;
 import com.cassierq.api.domain.repository.PurchaseOrderRepository;
 import com.cassierq.api.domain.repository.StockMovementRepository;
 import com.cassierq.api.domain.repository.StoreRepository;
-import com.cassierq.api.domain.repository.SupplierRepository;
-import com.cassierq.api.domain.repository.UnitRepository;
 import com.cassierq.api.domain.repository.UserRepository;
 import com.cassierq.api.purchasing.dto.CreatePurchaseOrderItemRequest;
 import com.cassierq.api.purchasing.dto.CreatePurchaseOrderRequest;
@@ -48,9 +46,7 @@ public class PurchaseOrderService {
 
     private final PurchaseOrderRepository purchaseOrderRepository;
     private final PurchaseOrderItemRepository purchaseOrderItemRepository;
-    private final SupplierRepository supplierRepository;
-    private final ProductRepository productRepository;
-    private final UnitRepository unitRepository;
+    private final CatalogScope catalogScope;
     private final ProductUnitConversionRepository conversionRepository;
     private final InventoryRepository inventoryRepository;
     private final StockMovementRepository stockMovementRepository;
@@ -63,9 +59,11 @@ public class PurchaseOrderService {
         UUID storeId = requireStore(principal);
         Store store = storeRepository.findById(storeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Toko tidak ditemukan"));
-        Supplier supplier = supplierRepository.findById(request.supplierId())
-                .filter(Supplier::isActive)
-                .orElseThrow(() -> new ResourceNotFoundException("Supplier tidak ditemukan atau tidak aktif"));
+        UUID catalogOwner = catalogScope.ownerOf(principal);
+        Supplier supplier = catalogScope.supplier(request.supplierId(), catalogOwner);
+        if (!supplier.isActive()) {
+            throw new BadRequestException("Supplier tidak aktif");
+        }
         User creator = userRepository.getReferenceById(principal.getUserId());
 
         String poNumber = numberSequenceService.next(store, "PURCHASE_ORDER");
@@ -82,7 +80,7 @@ public class PurchaseOrderService {
                 .build());
 
         List<PurchaseOrderItem> items = request.items().stream()
-                .map(itemRequest -> buildItem(po, itemRequest))
+                .map(itemRequest -> buildItem(po, itemRequest, catalogOwner))
                 .toList();
         purchaseOrderItemRepository.saveAll(items);
 
@@ -192,12 +190,9 @@ public class PurchaseOrderService {
         return toResponse(po, purchaseOrderItemRepository.findByPurchaseOrderId(id));
     }
 
-    private PurchaseOrderItem buildItem(PurchaseOrder po, CreatePurchaseOrderItemRequest request) {
-        Product product = productRepository.findById(request.productId())
-                .filter(p -> p.getDeletedAt() == null)
-                .orElseThrow(() -> new ResourceNotFoundException("Produk tidak ditemukan"));
-        Unit unit = unitRepository.findById(request.unitId())
-                .orElseThrow(() -> new ResourceNotFoundException("Satuan tidak ditemukan"));
+    private PurchaseOrderItem buildItem(PurchaseOrder po, CreatePurchaseOrderItemRequest request, UUID catalogOwner) {
+        Product product = catalogScope.product(request.productId(), catalogOwner);
+        Unit unit = catalogScope.unit(request.unitId(), catalogOwner);
         ProductUnitConversion conversion = conversionRepository.findByProductIdAndUnitId(product.getId(), unit.getId())
                 .orElseThrow(() -> new BadRequestException("Satuan tersebut tidak berlaku untuk produk " + product.getProductName()));
 

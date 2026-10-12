@@ -1,12 +1,15 @@
 package com.cassierq.api.sales;
 
+import com.cassierq.api.catalog.CatalogScope;
 import com.cassierq.api.common.NumberSequenceService;
 import com.cassierq.api.common.PageResponse;
 import com.cassierq.api.common.exception.BadRequestException;
 import com.cassierq.api.common.exception.ResourceNotFoundException;
+import com.cassierq.api.config.BusinessProperties;
 import com.cassierq.api.customer.CustomerService;
 import com.cassierq.api.domain.entity.CashierSession;
 import com.cassierq.api.domain.entity.Customer;
+import com.cassierq.api.domain.entity.CustomerLedgerEntry;
 import com.cassierq.api.domain.entity.Inventory;
 import com.cassierq.api.domain.entity.Payment;
 import com.cassierq.api.domain.entity.Product;
@@ -23,13 +26,11 @@ import com.cassierq.api.domain.repository.CustomerRepository;
 import com.cassierq.api.domain.repository.InventoryRepository;
 import com.cassierq.api.domain.repository.PaymentRepository;
 import com.cassierq.api.domain.repository.ProductPriceRepository;
-import com.cassierq.api.domain.repository.ProductRepository;
 import com.cassierq.api.domain.repository.ProductUnitConversionRepository;
 import com.cassierq.api.domain.repository.SalesTransactionItemRepository;
 import com.cassierq.api.domain.repository.SalesTransactionRepository;
 import com.cassierq.api.domain.repository.StockMovementRepository;
 import com.cassierq.api.domain.repository.StoreRepository;
-import com.cassierq.api.domain.repository.UnitRepository;
 import com.cassierq.api.domain.repository.UserRepository;
 import com.cassierq.api.sales.dto.CreateOrderItemRequest;
 import com.cassierq.api.sales.dto.CreateOrderRequest;
@@ -39,10 +40,15 @@ import com.cassierq.api.sales.dto.ReceiptItemResponse;
 import com.cassierq.api.sales.dto.ReceiptResponse;
 import com.cassierq.api.security.AppUserPrincipal;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -53,8 +59,11 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class OrderService {
 
-    private final ProductRepository productRepository;
-    private final UnitRepository unitRepository;
+    private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
+    // Pembulatan PPN di HP (Math.round) vs di sini boleh beda 1 rupiah.
+    private static final BigDecimal TAX_TOLERANCE = BigDecimal.ONE;
+
+    private final CatalogScope catalogScope;
     private final ProductUnitConversionRepository conversionRepository;
     private final ProductPriceRepository priceRepository;
     private final InventoryRepository inventoryRepository;
@@ -69,18 +78,37 @@ public class OrderService {
     private final CustomerRepository customerRepository;
     private final CustomerService customerService;
     private final CustomerLedgerEntryRepository ledgerRepository;
+    private final BusinessProperties businessProperties;
 
+    /**
+     * @param idempotencyKey opsional; kalau transaksi dengan key yang sama di toko ini
+     *                       sudah ada (retry setelah timeout), transaksi itu yang dikembalikan
+     *                       — stok tidak dipotong dua kali.
+     */
     @Transactional
-    public OrderResponse create(CreateOrderRequest request, AppUserPrincipal principal) {
+    public OrderResponse create(CreateOrderRequest request, AppUserPrincipal principal, String idempotencyKey) {
         UUID storeId = requireStore(principal);
+        if (idempotencyKey != null) {
+            Optional<OrderResponse> existing = findByIdempotencyKey(storeId, idempotencyKey);
+            if (existing.isPresent()) {
+                return existing.get();
+            }
+        }
+
         Store store = storeRepository.findById(storeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Toko tidak ditemukan"));
         CashierSession session = cashierSessionRepository.findByCashierIdAndStatus(principal.getUserId(), "OPEN")
                 .orElseThrow(() -> new BadRequestException("Anda belum membuka sesi kasir"));
         User cashier = userRepository.getReferenceById(principal.getUserId());
+        UUID catalogOwner = catalogScope.ownerOf(principal);
 
         BigDecimal discountAmount = request.discountAmount() != null ? request.discountAmount() : BigDecimal.ZERO;
         BigDecimal taxAmount = request.taxAmount() != null ? request.taxAmount() : BigDecimal.ZERO;
+
+        // Kunci baris stok dalam urutan productId yang tetap: dua kasir dengan
+        // keranjang [A,B] dan [B,A] tidak saling menunggu (deadlock). Lookup
+        // berikutnya di priceAndReserveLine memakai entity yang sudah terkunci.
+        lockInventoryInOrder(storeId, request.items().stream().map(CreateOrderItemRequest::productId).toList());
 
         List<SalesTransactionItem> items = new ArrayList<>();
         List<StockMovement> movements = new ArrayList<>();
@@ -90,16 +118,19 @@ public class OrderService {
         // it, but we need the computed totals first — build it once totals
         // are known, right before saving everything together at the end.
         for (CreateOrderItemRequest itemRequest : request.items()) {
-            LineResult line = priceAndReserveLine(storeId, itemRequest);
+            LineResult line = priceAndReserveLine(storeId, catalogOwner, itemRequest);
             subtotal = subtotal.add(line.subtotal);
             items.add(line.item);
             movements.add(line.movement);
         }
 
-        BigDecimal grandTotal = subtotal.subtract(discountAmount).add(taxAmount);
-        if (grandTotal.compareTo(BigDecimal.ZERO) < 0) {
+        validateDiscount(principal, subtotal, discountAmount);
+        BigDecimal afterDiscount = subtotal.subtract(discountAmount);
+        if (afterDiscount.compareTo(BigDecimal.ZERO) < 0) {
             throw new BadRequestException("Diskon melebihi total belanja");
         }
+        validateTax(afterDiscount, taxAmount);
+        BigDecimal grandTotal = afterDiscount.add(taxAmount);
 
         Customer customer = null;
         if (request.customerId() != null) {
@@ -138,6 +169,7 @@ public class OrderService {
                 .paymentAmount(request.paymentAmount())
                 .changeAmount(changeAmount)
                 .transactionStatus("PAID")
+                .idempotencyKey(idempotencyKey)
                 .build());
 
         items.forEach(item -> {
@@ -154,15 +186,19 @@ public class OrderService {
         });
         stockMovementRepository.saveAll(movements);
 
-        paymentRepository.save(Payment.builder()
-                .transaction(transaction)
-                .paymentMethod(request.paymentMethod())
-                .amount(request.paymentAmount())
-                .paymentStatus("SUCCESS")
-                .paidAt(now)
-                .createdBy(cashier)
-                .createdAt(now)
-                .build());
+        // payments.amount harus > 0 (CK_payments_amount_positive) — penjualan
+        // kredit penuh tanpa uang muka tidak punya baris payment.
+        if (request.paymentAmount().compareTo(BigDecimal.ZERO) > 0) {
+            paymentRepository.save(Payment.builder()
+                    .transaction(transaction)
+                    .paymentMethod(request.paymentMethod())
+                    .amount(request.paymentAmount())
+                    .paymentStatus("SUCCESS")
+                    .paidAt(now)
+                    .createdBy(cashier)
+                    .createdAt(now)
+                    .build());
+        }
 
         if (customer != null && debtAmount.compareTo(BigDecimal.ZERO) > 0) {
             // Throws (rolling back the whole sale, stock deduction included)
@@ -172,6 +208,19 @@ public class OrderService {
 
         return OrderResponse.from(transaction, items.stream().map(OrderItemResponse::from).toList(),
                 customer != null ? customer.getId() : null, customer != null ? debtAmount : null);
+    }
+
+    /** Dipakai juga oleh controller saat dua retry yang sama balapan dan salah satunya kena unique index. */
+    @Transactional(readOnly = true)
+    public Optional<OrderResponse> findByIdempotencyKey(UUID storeId, String idempotencyKey) {
+        return transactionRepository.findByStoreIdAndIdempotencyKey(storeId, idempotencyKey)
+                .map(t -> {
+                    var debt = ledgerRepository.findFirstBySalesTransactionIdAndEntryType(t.getId(), "DEBT");
+                    return OrderResponse.from(t,
+                            itemRepository.findByTransactionId(t.getId()).stream().map(OrderItemResponse::from).toList(),
+                            debt.map(e -> e.getCustomer().getId()).orElse(null),
+                            debt.map(CustomerLedgerEntry::getAmount).orElse(null));
+                });
     }
 
     @Transactional
@@ -187,6 +236,7 @@ public class OrderService {
         User voider = userRepository.getReferenceById(principal.getUserId());
         Instant now = Instant.now();
         List<SalesTransactionItem> items = itemRepository.findByTransactionId(id);
+        lockInventoryInOrder(storeId, items.stream().map(item -> item.getProduct().getId()).toList());
 
         for (SalesTransactionItem item : items) {
             Inventory inventory = inventoryRepository.findForUpdate(storeId, item.getProduct().getId())
@@ -213,6 +263,24 @@ public class OrderService {
                     .build());
         }
 
+        // Uang dikembalikan: payment tidak lagi dihitung di expected cash sesi kasir.
+        paymentRepository.findByTransactionId(id).forEach(payment -> {
+            payment.setPaymentStatus("REFUNDED");
+            paymentRepository.save(payment);
+        });
+
+        // Penjualan kredit: utangnya ikut batal (entry VOID, ledger tetap append-only).
+        ledgerRepository.findFirstBySalesTransactionIdAndEntryType(id, "DEBT").ifPresent(debt ->
+                ledgerRepository.save(CustomerLedgerEntry.builder()
+                        .customer(debt.getCustomer())
+                        .entryType("VOID")
+                        .amount(debt.getAmount())
+                        .salesTransaction(transaction)
+                        .notes("Void " + transaction.getTransactionNumber() + ": " + reason)
+                        .createdBy(voider)
+                        .createdAt(now)
+                        .build()));
+
         transaction.setTransactionStatus("VOID");
         transaction.setVoidReason(reason);
         transaction.setVoidedBy(voider);
@@ -226,7 +294,13 @@ public class OrderService {
     public PageResponse<OrderResponse> list(AppUserPrincipal principal, Pageable pageable) {
         UUID storeId = requireStore(principal);
         Page<SalesTransaction> page = transactionRepository.findByStoreIdOrderByTransactionDateDesc(storeId, pageable);
-        return PageResponse.of(page.map(t -> toResponse(t, itemRepository.findByTransactionId(t.getId()))));
+        // Satu query untuk item semua transaksi di halaman ini, bukan satu per transaksi.
+        List<UUID> ids = page.getContent().stream().map(SalesTransaction::getId).toList();
+        Map<UUID, List<SalesTransactionItem>> itemsByTransaction = ids.isEmpty()
+                ? Map.of()
+                : itemRepository.findByTransactionIdIn(ids).stream()
+                        .collect(Collectors.groupingBy(item -> item.getTransaction().getId()));
+        return PageResponse.of(page.map(t -> toResponse(t, itemsByTransaction.getOrDefault(t.getId(), List.of()))));
     }
 
     @Transactional(readOnly = true)
@@ -279,12 +353,43 @@ public class OrderService {
                 debtAmount);
     }
 
-    private LineResult priceAndReserveLine(UUID storeId, CreateOrderItemRequest itemRequest) {
-        Product product = productRepository.findById(itemRequest.productId())
-                .filter(p -> p.getDeletedAt() == null && "ACTIVE".equals(p.getStatus()))
-                .orElseThrow(() -> new ResourceNotFoundException("Produk tidak ditemukan atau tidak aktif"));
-        Unit unit = unitRepository.findById(itemRequest.unitId())
-                .orElseThrow(() -> new ResourceNotFoundException("Satuan tidak ditemukan"));
+    private void lockInventoryInOrder(UUID storeId, List<UUID> productIds) {
+        productIds.stream()
+                .distinct()
+                .sorted(Comparator.comparing(UUID::toString))
+                .forEach(productId -> inventoryRepository.findForUpdate(storeId, productId));
+    }
+
+    /** Diskon di atas batas hanya boleh diberikan SUPERADMIN / KEPALA_TOKO. */
+    private void validateDiscount(AppUserPrincipal principal, BigDecimal subtotal, BigDecimal discountAmount) {
+        if (discountAmount.signum() == 0 || principal.hasRole("SUPERADMIN") || principal.hasRole("KEPALA_TOKO")) {
+            return;
+        }
+        BigDecimal maxPercent = businessProperties.cashierMaxDiscountPercent();
+        BigDecimal maxDiscount = subtotal.multiply(maxPercent).divide(HUNDRED, 2, RoundingMode.HALF_UP);
+        if (discountAmount.compareTo(maxDiscount) > 0) {
+            throw new BadRequestException("Diskon maksimal untuk kasir " + maxPercent.stripTrailingZeros().toPlainString()
+                    + "% — minta Kepala Toko untuk diskon lebih besar");
+        }
+    }
+
+    /** PPN dari HP harus 0 (tanpa PPN) atau sama dengan tarif PPN × (subtotal − diskon). */
+    private void validateTax(BigDecimal taxableAmount, BigDecimal taxAmount) {
+        if (taxAmount.signum() == 0) {
+            return;
+        }
+        BigDecimal expected = taxableAmount.multiply(businessProperties.taxRate()).setScale(0, RoundingMode.HALF_UP);
+        if (taxAmount.subtract(expected).abs().compareTo(TAX_TOLERANCE) > 0) {
+            throw new BadRequestException("Nilai PPN tidak sesuai (seharusnya " + expected.toPlainString() + ")");
+        }
+    }
+
+    private LineResult priceAndReserveLine(UUID storeId, UUID catalogOwner, CreateOrderItemRequest itemRequest) {
+        Product product = catalogScope.product(itemRequest.productId(), catalogOwner);
+        if (!"ACTIVE".equals(product.getStatus())) {
+            throw new BadRequestException("Produk " + product.getProductName() + " tidak aktif");
+        }
+        Unit unit = catalogScope.unit(itemRequest.unitId(), catalogOwner);
         ProductUnitConversion conversion = conversionRepository.findByProductIdAndUnitId(product.getId(), unit.getId())
                 .orElseThrow(() -> new BadRequestException("Satuan tersebut tidak berlaku untuk produk " + product.getProductName()));
         var price = priceRepository.findByStoreIdAndProductIdAndEffectiveUntilIsNull(storeId, product.getId())

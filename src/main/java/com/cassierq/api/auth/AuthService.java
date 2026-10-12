@@ -17,9 +17,11 @@ import com.cassierq.api.domain.entity.Device;
 import com.cassierq.api.domain.entity.Employee;
 import com.cassierq.api.domain.entity.NumberSequence;
 import com.cassierq.api.domain.entity.PasswordResetToken;
+import com.cassierq.api.domain.entity.ProductCategory;
 import com.cassierq.api.domain.entity.RefreshToken;
 import com.cassierq.api.domain.entity.Role;
 import com.cassierq.api.domain.entity.Store;
+import com.cassierq.api.domain.entity.Unit;
 import com.cassierq.api.domain.entity.User;
 import com.cassierq.api.domain.entity.UserRole;
 import com.cassierq.api.domain.entity.UserSession;
@@ -27,9 +29,11 @@ import com.cassierq.api.domain.repository.DeviceRepository;
 import com.cassierq.api.domain.repository.EmployeeRepository;
 import com.cassierq.api.domain.repository.NumberSequenceRepository;
 import com.cassierq.api.domain.repository.PasswordResetTokenRepository;
+import com.cassierq.api.domain.repository.ProductCategoryRepository;
 import com.cassierq.api.domain.repository.RefreshTokenRepository;
 import com.cassierq.api.domain.repository.RoleRepository;
 import com.cassierq.api.domain.repository.StoreRepository;
+import com.cassierq.api.domain.repository.UnitRepository;
 import com.cassierq.api.domain.repository.UserRepository;
 import com.cassierq.api.domain.repository.UserRoleRepository;
 import com.cassierq.api.domain.repository.UserSessionRepository;
@@ -69,6 +73,8 @@ public class AuthService {
     private final UserSessionRepository userSessionRepository;
     private final DeviceRepository deviceRepository;
     private final PasswordResetTokenRepository passwordResetTokenRepository;
+    private final UnitRepository unitRepository;
+    private final ProductCategoryRepository categoryRepository;
     private final PasswordResetMailSender passwordResetMailSender;
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
@@ -91,6 +97,7 @@ public class AuthService {
                 .status("ACTIVE")
                 .build());
         provisionNumberSequences(store);
+        provisionStarterCatalog(store);
 
         Employee employee = employeeRepository.save(Employee.builder()
                 .employeeCode(request.username())
@@ -200,9 +207,13 @@ public class AuthService {
         return UserResponse.from(user, roles);
     }
 
-    /** Authenticated user changes their own password, knowing the current one. */
+    /**
+     * Authenticated user changes their own password, knowing the current one.
+     * Every other session is logged out immediately (not just their refresh
+     * tokens) — only the session making this request stays alive.
+     */
     @Transactional
-    public void changePassword(UUID userId, ChangePasswordRequest request) {
+    public void changePassword(UUID userId, String currentJti, ChangePasswordRequest request) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User tidak ditemukan"));
 
@@ -215,6 +226,7 @@ public class AuthService {
         userRepository.save(user);
 
         refreshTokenRepository.revokeAllByUserId(user.getId());
+        userSessionRepository.revokeAllByUserIdExcept(user.getId(), currentJti);
     }
 
     @Transactional
@@ -247,7 +259,28 @@ public class AuthService {
         stored.setUsed(true);
         passwordResetTokenRepository.save(stored);
 
-        refreshTokenRepository.revokeAllByUserId(user.getId());
+        // Password direset karena mungkin bocor: semua sesi (access token
+        // 24 jam juga, bukan cuma refresh token) langsung mati.
+        revokeAllSessions(user.getId());
+    }
+
+    /**
+     * Toko hasil register adalah toko induk dengan katalog sendiri yang masih
+     * kosong — tanpa satuan & kategori, produk pertama tidak bisa dibuat.
+     */
+    private void provisionStarterCatalog(Store store) {
+        unitRepository.save(Unit.builder()
+                .unitCode("PCS")
+                .unitName("Pcs")
+                .ownerStoreId(store.getId())
+                .createdAt(Instant.now())
+                .build());
+        categoryRepository.save(ProductCategory.builder()
+                .categoryCode("UMUM")
+                .categoryName("Umum")
+                .ownerStoreId(store.getId())
+                .active(true)
+                .build());
     }
 
     private void provisionNumberSequences(Store store) {
@@ -278,7 +311,8 @@ public class AuthService {
                 .issuedAt(now)
                 .expiresAt(expiry)
                 .build());
-        String accessToken = jwtService.issueAccessToken(principal, jti);
+        String accessToken = jwtService.issueAccessToken(principal, jti,
+                device.deviceId() == null || device.deviceId().isBlank() ? null : device.deviceId());
 
         String rawRefreshToken = jwtService.generateRefreshTokenValue();
         refreshTokenRepository.save(RefreshToken.builder()

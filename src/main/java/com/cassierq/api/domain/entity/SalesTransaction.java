@@ -83,4 +83,8 @@ public class SalesTransaction extends Auditable {
 
     @Column(name = "voided_at")
     private Instant voidedAt;
+
+    /** Dikirim HP lewat header Idempotency-Key — retry checkout yang sama tidak membuat transaksi ganda. */
+    @Column(name = "idempotency_key", length = 100)
+    private String idempotencyKey;
 }

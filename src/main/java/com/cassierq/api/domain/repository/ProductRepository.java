@@ -8,11 +8,14 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 
+/** Every lookup is scoped to the catalog owner (root store) — see CatalogScope. */
 public interface ProductRepository extends JpaRepository<Product, UUID> {
 
-    boolean existsBySkuIgnoreCase(String sku);
+    boolean existsByOwnerStoreIdAndSkuIgnoreCase(UUID ownerStoreId, String sku);
 
-    Optional<Product> findByBarcodeAndDeletedAtIsNull(String barcode);
+    Optional<Product> findByIdAndOwnerStoreIdAndDeletedAtIsNull(UUID id, UUID ownerStoreId);
+
+    Optional<Product> findByOwnerStoreIdAndBarcodeAndDeletedAtIsNull(UUID ownerStoreId, String barcode);
 
     // Matches name, SKU, barcode, or brand — whichever the client typed into
     // one search box (a cashier might scan-paste a barcode here just as
@@ -20,11 +23,12 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
     @Query("""
             select p from Product p
             where p.deletedAt is null
+              and p.ownerStoreId = :ownerStoreId
               and (:search is null
                    or lower(p.productName) like lower(concat('%', :search, '%'))
                    or lower(p.sku) like lower(concat('%', :search, '%'))
                    or lower(p.barcode) like lower(concat('%', :search, '%'))
                    or lower(p.brand) like lower(concat('%', :search, '%')))
             """)
-    Page<Product> search(String search, Pageable pageable);
+    Page<Product> search(UUID ownerStoreId, String search, Pageable pageable);
 }

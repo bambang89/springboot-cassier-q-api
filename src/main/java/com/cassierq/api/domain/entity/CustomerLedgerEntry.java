@@ -20,7 +20,7 @@ import lombok.Setter;
 
 /**
  * One row per debt (customer bought on credit) or payment (customer paid
- * down their tab) — {@code entryType} is {@code DEBT} or {@code PAYMENT}.
+ * down their tab) — {@code entryType} is {@code DEBT}, {@code PAYMENT}, or {@code VOID} (reverses the DEBT of a voided sale).
  * {@link Customer#getCreditLimit()}-checked balance is the sum of DEBT minus
  * PAYMENT, computed on read (see {@code CustomerLedgerEntryRepository}), not
  * stored here. Only has {@code created_at} — entries are never edited.

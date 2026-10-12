@@ -46,8 +46,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 JwtService.AccessTokenClaims c = claims.get();
                 String deviceId = request.getHeader(DEVICE_ID_HEADER);
                 boolean deviceIdSent = deviceId != null && !deviceId.isBlank();
-                if (deviceIdSent && !isDeviceRecognized(c.userId(), deviceId)) {
-                    writeDeviceError(response, deviceId);
+                // Token yang diterbitkan untuk device tertentu (claim did) hanya
+                // berlaku dari device itu — tidak bisa dilewati dengan sekadar
+                // tidak mengirim header X-Device-Id.
+                boolean deviceMismatch = c.deviceId() != null
+                        ? !c.deviceId().equals(deviceId)
+                        : deviceIdSent && !isDeviceRecognized(c.userId(), deviceId);
+                if (deviceMismatch) {
+                    writeDeviceError(response);
                     return; // short-circuit — never reaches a controller
                 }
 
@@ -73,7 +79,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         return deviceRepository.findByUserIdAndDeviceId(userId, deviceId).isPresent();
     }
 
-    private void writeDeviceError(HttpServletResponse response, String deviceId) throws IOException {
+    private void writeDeviceError(HttpServletResponse response) throws IOException {
         response.setStatus(HttpStatus.UNAUTHORIZED.value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         String body = """

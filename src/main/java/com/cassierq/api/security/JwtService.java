@@ -35,7 +35,11 @@ public class JwtService {
     }
 
 
-    public String issueAccessToken(AppUserPrincipal principal, String jti) {
+    /**
+     * @param deviceId kalau diisi, token diikat ke device ini (claim {@code did}) —
+     *                 JwtAuthenticationFilter menolaknya dari device lain.
+     */
+    public String issueAccessToken(AppUserPrincipal principal, String jti, String deviceId) {
         Instant now = Instant.now();
         Instant expiry = now.plus(jwtProperties.accessTokenTtlMinutes(), ChronoUnit.MINUTES);
         return Jwts.builder()
@@ -46,6 +50,7 @@ public class JwtService {
                 .claim("email", principal.getEmail())
                 .claim("superadmin", principal.isSuperadmin())
                 .claim("roles", encodeRoleGrants(principal.getRoleGrants()))
+                .claim("did", deviceId)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(expiry))
                 .signWith(signingKey())
@@ -70,7 +75,8 @@ public class JwtService {
                     claims.get("email", String.class),
                     Boolean.TRUE.equals(claims.get("superadmin", Boolean.class)),
                     decodeRoleGrants(claims.get("roles", String.class)),
-                    jti));
+                    jti,
+                    claims.get("did", String.class)));
         } catch (JwtException | IllegalArgumentException e) {
             return Optional.empty();
         }
@@ -137,6 +143,7 @@ public class JwtService {
     }
 
     public record AccessTokenClaims(
-            UUID userId, UUID employeeId, String username, String email, boolean superadmin, List<RoleGrant> roleGrants, String jti) {
+            UUID userId, UUID employeeId, String username, String email, boolean superadmin, List<RoleGrant> roleGrants, String jti,
+            String deviceId) {
     }
 }

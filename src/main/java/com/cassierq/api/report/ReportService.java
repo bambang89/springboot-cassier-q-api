@@ -1,6 +1,7 @@
 package com.cassierq.api.report;
 
 import com.cassierq.api.common.exception.BadRequestException;
+import com.cassierq.api.config.BusinessProperties;
 import com.cassierq.api.domain.repository.SalesTransactionItemRepository;
 import com.cassierq.api.domain.repository.SalesTransactionRepository;
 import com.cassierq.api.report.dto.BestSellerItem;
@@ -8,7 +9,7 @@ import com.cassierq.api.report.dto.SalesSummaryResponse;
 import com.cassierq.api.security.AppUserPrincipal;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -23,6 +24,7 @@ public class ReportService {
 
     private final SalesTransactionRepository transactionRepository;
     private final SalesTransactionItemRepository itemRepository;
+    private final BusinessProperties businessProperties;
 
     @Transactional(readOnly = true)
     public SalesSummaryResponse summary(AppUserPrincipal principal, LocalDate from, LocalDate to) {
@@ -31,14 +33,17 @@ public class ReportService {
             throw new BadRequestException("Akun ini tidak terikat ke toko manapun");
         }
 
-        LocalDate effectiveTo = to != null ? to : LocalDate.now(ZoneOffset.UTC);
+        // Batas hari mengikuti jam toko (WIB), bukan UTC — penjualan 00:00–07:00
+        // WIB tidak boleh masuk ke tanggal kemarin.
+        ZoneId zone = businessProperties.zoneId();
+        LocalDate effectiveTo = to != null ? to : LocalDate.now(zone);
         LocalDate effectiveFrom = from != null ? from : effectiveTo.minusDays(6);
         if (effectiveFrom.isAfter(effectiveTo)) {
             throw new BadRequestException("Tanggal 'from' tidak boleh setelah 'to'");
         }
 
-        Instant fromInstant = effectiveFrom.atStartOfDay(ZoneOffset.UTC).toInstant();
-        Instant toInstant = effectiveTo.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+        Instant fromInstant = effectiveFrom.atStartOfDay(zone).toInstant();
+        Instant toInstant = effectiveTo.plusDays(1).atStartOfDay(zone).toInstant();
 
         long orderCount = transactionRepository.countPaid(storeId, fromInstant, toInstant);
         var grossSales = transactionRepository.sumGrandTotalPaid(storeId, fromInstant, toInstant);
