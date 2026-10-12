@@ -21,7 +21,9 @@ import com.cassierq.api.security.AppUserPrincipal;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import com.cassierq.api.security.RolePolicy;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -50,8 +52,7 @@ public class EmployeeService {
         }
 
         Store store = storeRepository.getReferenceById(storeId);
-        Role role = roleRepository.findByRoleCodeIgnoreCase(request.roleCode())
-                .orElseThrow(() -> new ResourceNotFoundException("Role tidak ditemukan"));
+        Role role = assignableRole(caller, request.roleCode());
 
         Employee employee = employeeRepository.save(Employee.builder()
                 .employeeCode(request.username())
@@ -108,6 +109,7 @@ public class EmployeeService {
                 .orElseThrow(() -> new ResourceNotFoundException("Karyawan tidak ditemukan"));
         User user = userRepository.findByEmployeeId(employeeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Akun user untuk karyawan ini tidak ditemukan"));
+        requireCanManage(caller, user);
 
         employee.setFullName(request.name());
         employee.setPhone(request.phone());
@@ -118,9 +120,11 @@ public class EmployeeService {
         userRepository.save(user);
 
         List<String> currentRoles = roleCodesOf(user.getId());
-        if (currentRoles.size() != 1 || !currentRoles.get(0).equals(request.roleCode())) {
-            Role newRole = roleRepository.findByRoleCodeIgnoreCase(request.roleCode())
-                    .orElseThrow(() -> new ResourceNotFoundException("Role tidak ditemukan"));
+        if (currentRoles.size() != 1 || !currentRoles.get(0).equalsIgnoreCase(request.roleCode())) {
+            if (user.getId().equals(caller.getUserId())) {
+                throw new BadRequestException("Anda tidak bisa mengubah role akun Anda sendiri");
+            }
+            Role newRole = assignableRole(caller, request.roleCode());
             userRoleRepository.deleteByUserIdAndStoreId(user.getId(), storeId);
             userRoleRepository.save(UserRole.builder()
                     .user(user)
@@ -146,6 +150,7 @@ public class EmployeeService {
         if (user.getId().equals(caller.getUserId()) && !active) {
             throw new BadRequestException("Anda tidak bisa menonaktifkan akun Anda sendiri");
         }
+        requireCanManage(caller, user);
 
         employee.setActive(active);
         employeeRepository.save(employee);
@@ -159,6 +164,31 @@ public class EmployeeService {
         }
 
         return EmployeeResponse.from(employee, user, roleCodesOf(user.getId()));
+    }
+
+    /** Role hanya boleh dari daftar yang diizinkan untuk caller — SUPERADMIN tidak pernah bisa diberikan lewat API. */
+    private Role assignableRole(AppUserPrincipal caller, String roleCode) {
+        String code = roleCode == null ? "" : roleCode.trim().toUpperCase();
+        if (!RolePolicy.assignableBy(caller).contains(code)) {
+            throw new AccessDeniedException("Anda tidak bisa memberikan role " + code);
+        }
+        return roleRepository.findByRoleCodeIgnoreCase(code)
+                .orElseThrow(() -> new ResourceNotFoundException("Role tidak ditemukan"));
+    }
+
+    /**
+     * KEPALA_TOKO mengelola staf (PRODUCT/GUDANG/KASIR), bukan sesama
+     * KEPALA_TOKO atau SUPERADMIN. Mengubah data diri sendiri tetap boleh.
+     */
+    private void requireCanManage(AppUserPrincipal caller, User target) {
+        if (caller.isSuperadminUser() || target.getId().equals(caller.getUserId())) {
+            return;
+        }
+        boolean targetIsManager = target.isSuperadmin() || roleCodesOf(target.getId()).stream()
+                .anyMatch(code -> RolePolicy.SUPERADMIN.equals(code) || RolePolicy.KEPALA_TOKO.equals(code));
+        if (targetIsManager) {
+            throw new AccessDeniedException("Hanya pemilik aplikasi yang bisa mengubah akun Kepala Toko");
+        }
     }
 
     private EmployeeResponse toResponse(Employee employee) {
