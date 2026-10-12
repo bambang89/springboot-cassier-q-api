@@ -24,6 +24,11 @@ public class AppUserPrincipal implements UserDetails {
     private final boolean active;
     private final List<RoleGrant> roleGrants;
     private final String jti;
+    /**
+     * Toko yang sedang "dibantu" SUPERADMIN (header X-Store-Id). SUPERADMIN tidak
+     * terikat ke toko mana pun, jadi tanpa ini semua endpoint per-toko menolaknya.
+     */
+    private final UUID actingStoreId;
 
     public AppUserPrincipal(User user, List<RoleGrant> roleGrants) {
         this.userId = user.getId();
@@ -35,10 +40,16 @@ public class AppUserPrincipal implements UserDetails {
         this.active = user.isActive();
         this.roleGrants = roleGrants;
         this.jti = null;
+        this.actingStoreId = null;
     }
 
     public AppUserPrincipal(UUID userId, UUID employeeId, String username, String email, boolean superadmin, boolean active,
             List<RoleGrant> roleGrants, String jti) {
+        this(userId, employeeId, username, email, superadmin, active, roleGrants, jti, null);
+    }
+
+    public AppUserPrincipal(UUID userId, UUID employeeId, String username, String email, boolean superadmin, boolean active,
+            List<RoleGrant> roleGrants, String jti, UUID actingStoreId) {
         this.userId = userId;
         this.employeeId = employeeId;
         this.username = username;
@@ -48,6 +59,7 @@ public class AppUserPrincipal implements UserDetails {
         this.active = active;
         this.roleGrants = roleGrants;
         this.jti = jti;
+        this.actingStoreId = actingStoreId;
     }
 
     /** Builds a principal from a loaded {@link User} plus their {@code user_roles} rows (role + store already fetched). */
@@ -88,7 +100,15 @@ public class AppUserPrincipal implements UserDetails {
         return active;
     }
 
+    public boolean isSuperadminUser() {
+        return superadmin || roleGrants.stream().anyMatch(g -> "SUPERADMIN".equals(g.roleCode()));
+    }
+
+    /** Toko tempat request ini bekerja: toko pilihan SUPERADMIN, atau toko tempat user terdaftar. */
     public UUID getPrimaryStoreId() {
+        if (actingStoreId != null) {
+            return actingStoreId;
+        }
         return roleGrants.stream()
                 .map(RoleGrant::storeId)
                 .filter(Objects::nonNull)

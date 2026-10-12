@@ -55,7 +55,7 @@ public class CatalogScope {
      */
     public UUID requireWriter(AppUserPrincipal principal) {
         UUID owner = ownerOf(principal);
-        if (principal.hasRole("SUPERADMIN") || principal.hasRole("PRODUCT")) {
+        if (principal.isSuperadminUser() || principal.hasRole("PRODUCT")) {
             return owner;
         }
         if (principal.hasRole("KEPALA_TOKO") && owner.equals(principal.getPrimaryStoreId())) {

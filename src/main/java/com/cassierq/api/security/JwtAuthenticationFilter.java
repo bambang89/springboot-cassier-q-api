@@ -1,6 +1,7 @@
 package com.cassierq.api.security;
 
 import com.cassierq.api.domain.repository.DeviceRepository;
+import com.cassierq.api.domain.repository.StoreRepository;
 import com.cassierq.api.domain.repository.UserSessionRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -26,10 +27,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private static final String BEARER_PREFIX = "Bearer ";
     private static final String DEVICE_ID_HEADER = "X-Device-Id";
+    private static final String STORE_ID_HEADER = "X-Store-Id";
 
     private final JwtService jwtService;
     private final UserSessionRepository userSessionRepository;
     private final DeviceRepository deviceRepository;
+    private final StoreRepository storeRepository;
 
     @Override
     protected void doFilterInternal(
@@ -58,7 +61,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 }
 
                 AppUserPrincipal principal = new AppUserPrincipal(
-                        c.userId(), c.employeeId(), c.username(), c.email(), c.superadmin(), true, c.roleGrants(), c.jti());
+                        c.userId(), c.employeeId(), c.username(), c.email(), c.superadmin(), true, c.roleGrants(), c.jti(),
+                        resolveActingStore(c, request.getHeader(STORE_ID_HEADER)));
                 var authentication = new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities());
                 authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                 SecurityContextHolder.getContext().setAuthentication(authentication);
@@ -66,6 +70,21 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    /** Hanya SUPERADMIN yang boleh berpindah toko lewat header; user lain diabaikan (selalu toko sendiri). */
+    private UUID resolveActingStore(JwtService.AccessTokenClaims claims, String header) {
+        boolean superadmin = claims.superadmin()
+                || claims.roleGrants().stream().anyMatch(g -> "SUPERADMIN".equals(g.roleCode()));
+        if (!superadmin || header == null || header.isBlank()) {
+            return null;
+        }
+        try {
+            UUID storeId = UUID.fromString(header.trim());
+            return storeRepository.existsById(storeId) ? storeId : null;
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     private boolean isSessionLive(JwtService.AccessTokenClaims claims) {
