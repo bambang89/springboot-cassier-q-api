@@ -72,6 +72,8 @@ app:
     tax-rate: ${TAX_RATE:0.11}
     # Diskon di atas persen ini (dari subtotal) hanya boleh SUPERADMIN/KEPALA_TOKO.
     cashier-max-discount-percent: ${CASHIER_MAX_DISCOUNT_PERCENT:10}
+    # Sesi kasir yang masih OPEN ditutup otomatis setiap hari pada jam ini (zona timezone di atas).
+    cashier-session-auto-close: ${CASHIER_SESSION_AUTO_CLOSE:23:00}
   rate-limit:
     auth-per-minute: ${AUTH_RATE_LIMIT_PER_MINUTE:20}
   upload:
