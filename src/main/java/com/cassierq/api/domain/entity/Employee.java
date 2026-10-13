@@ -58,6 +58,18 @@ public class Employee extends Auditable {
     @Column(name = "hire_date")
     private LocalDate hireDate;
 
+    /** NIK KTP (16 digits), optional (V14). */
+    @Column(name = "national_id", length = 16)
+    private String nationalId;
+
+    /** NIK / employee ID number used by the store, optional (V14). */
+    @Column(name = "employee_number", length = 50)
+    private String employeeNumber;
+
+    /** Stored employee photo URL (/uploads/...), optional (V14). */
+    @Column(name = "photo_url", length = 500)
+    private String photoUrl;
+
     @Column(name = "is_active", nullable = false)
     @Builder.Default
     private boolean active = true;

@@ -73,4 +73,19 @@ public class EmployeeController {
     public EmployeeResponse reactivate(@AuthenticationPrincipal AppUserPrincipal principal, @PathVariable UUID id) {
         return employeeService.setActive(principal, id, true);
     }
+
+    @PostMapping(value = "/{id}/photo", consumes = "multipart/form-data")
+    @Operation(summary = "Upload/ganti foto karyawan (JPG/PNG/WEBP, maks 5MB)")
+    public EmployeeResponse uploadPhoto(
+            @AuthenticationPrincipal AppUserPrincipal principal,
+            @PathVariable UUID id,
+            @org.springframework.web.bind.annotation.RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
+        return employeeService.updatePhoto(principal, id, file);
+    }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/{id}/photo")
+    @Operation(summary = "Hapus foto karyawan")
+    public EmployeeResponse removePhoto(@AuthenticationPrincipal AppUserPrincipal principal, @PathVariable UUID id) {
+        return employeeService.removePhoto(principal, id);
+    }
 }

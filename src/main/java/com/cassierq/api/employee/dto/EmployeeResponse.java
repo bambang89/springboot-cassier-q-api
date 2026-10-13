@@ -14,7 +14,10 @@ public record EmployeeResponse(
         String email,
         String phone,
         boolean active,
-        List<String> roles) {
+        List<String> roles,
+        String nationalId,
+        String employeeNumber,
+        String photoUrl) {
 
     public static EmployeeResponse from(Employee employee, User user, List<String> roleCodes) {
         return new EmployeeResponse(
@@ -26,6 +29,9 @@ public record EmployeeResponse(
                 user.getEmail(),
                 employee.getPhone(),
                 employee.isActive() && user.isActive(),
-                roleCodes);
+                roleCodes,
+                employee.getNationalId(),
+                employee.getEmployeeNumber(),
+                com.cassierq.api.common.storage.PublicUrls.resolve(employee.getPhotoUrl()));
     }
 }

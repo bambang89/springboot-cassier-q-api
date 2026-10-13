@@ -31,5 +31,13 @@ public record CreateEmployeeRequest(
 
         @NotBlank(message = "Role wajib diisi")
         @Pattern(regexp = "KEPALA_TOKO|PRODUCT|GUDANG|KASIR", message = "Role harus KEPALA_TOKO, PRODUCT, GUDANG, atau KASIR")
-        String roleCode) {
+        String roleCode,
+
+        // Optional identity data (V14).
+
+        @Pattern(regexp = "^$|^\\d{16}$", message = "NIK KTP harus 16 angka")
+        String nationalId,
+
+        @Size(max = 50, message = "NIK Karyawan maksimal 50 karakter")
+        String employeeNumber) {
 }

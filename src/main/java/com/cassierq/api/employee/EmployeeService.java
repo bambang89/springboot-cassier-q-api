@@ -39,6 +39,7 @@ public class EmployeeService {
     private final StoreRepository storeRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuthService authService;
+    private final com.cassierq.api.common.storage.FileStorageService fileStorageService;
 
     @Transactional
     public EmployeeResponse create(AppUserPrincipal caller, CreateEmployeeRequest request) {
@@ -53,6 +54,9 @@ public class EmployeeService {
 
         Store store = storeRepository.getReferenceById(storeId);
         Role role = assignableRole(caller, request.roleCode());
+        String nationalId = blankToNull(request.nationalId());
+        String employeeNumber = blankToNull(request.employeeNumber());
+        checkIdentityUnique(storeId, nationalId, employeeNumber, null);
 
         Employee employee = employeeRepository.save(Employee.builder()
                 .employeeCode(request.username())
@@ -60,6 +64,8 @@ public class EmployeeService {
                 .fullName(request.name())
                 .phone(request.phone())
                 .email(request.email())
+                .nationalId(nationalId)
+                .employeeNumber(employeeNumber)
                 .active(true)
                 .build());
 
@@ -111,9 +117,15 @@ public class EmployeeService {
                 .orElseThrow(() -> new ResourceNotFoundException("Akun user untuk karyawan ini tidak ditemukan"));
         requireCanManage(caller, user);
 
+        String nationalId = blankToNull(request.nationalId());
+        String employeeNumber = blankToNull(request.employeeNumber());
+        checkIdentityUnique(storeId, nationalId, employeeNumber, employeeId);
+
         employee.setFullName(request.name());
         employee.setPhone(request.phone());
         employee.setEmail(request.email());
+        employee.setNationalId(nationalId);
+        employee.setEmployeeNumber(employeeNumber);
         employeeRepository.save(employee);
 
         user.setEmail(request.email());
@@ -189,6 +201,54 @@ public class EmployeeService {
         if (targetIsManager) {
             throw new AccessDeniedException("Hanya pemilik aplikasi yang bisa mengubah akun Kepala Toko");
         }
+    }
+
+    /** Uploads or replaces an employee's photo (store head); the old file is removed after commit. */
+    @Transactional
+    public EmployeeResponse updatePhoto(AppUserPrincipal caller, UUID employeeId, org.springframework.web.multipart.MultipartFile file) {
+        Employee employee = requireInStore(caller, employeeId);
+        String previous = employee.getPhotoUrl();
+        employee.setPhotoUrl(fileStorageService.storeImage(
+                "stores/" + com.cassierq.api.common.storage.FileStorageService.slug(employee.getStore().getStoreCode())
+                        + "/employees/" + employeeId,
+                employee.getFullName(), file));
+        employeeRepository.save(employee);
+        fileStorageService.deleteAfterCommit(previous);
+        return toResponse(employee);
+    }
+
+    /** Removes an employee's photo. */
+    @Transactional
+    public EmployeeResponse removePhoto(AppUserPrincipal caller, UUID employeeId) {
+        Employee employee = requireInStore(caller, employeeId);
+        fileStorageService.deleteAfterCommit(employee.getPhotoUrl());
+        employee.setPhotoUrl(null);
+        employeeRepository.save(employee);
+        return toResponse(employee);
+    }
+
+    private Employee requireInStore(AppUserPrincipal caller, UUID employeeId) {
+        UUID storeId = requireStore(caller);
+        return employeeRepository.findById(employeeId)
+                .filter(e -> e.getStore() != null && storeId.equals(e.getStore().getId()))
+                .orElseThrow(() -> new ResourceNotFoundException("Karyawan tidak ditemukan"));
+    }
+
+    /** NIK KTP and NIK Karyawan must be unique among the store's employees (when filled in). */
+    private void checkIdentityUnique(UUID storeId, String nationalId, String employeeNumber, UUID currentId) {
+        for (Employee other : employeeRepository.findByStoreId(storeId)) {
+            if (other.getId().equals(currentId)) continue;
+            if (nationalId != null && nationalId.equals(other.getNationalId())) {
+                throw new ConflictException("NIK KTP sudah dipakai karyawan " + other.getFullName());
+            }
+            if (employeeNumber != null && employeeNumber.equalsIgnoreCase(other.getEmployeeNumber())) {
+                throw new ConflictException("NIK Karyawan sudah dipakai " + other.getFullName());
+            }
+        }
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     private EmployeeResponse toResponse(Employee employee) {
