@@ -17,6 +17,11 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
 
     Optional<Product> findByOwnerStoreIdAndBarcodeAndDeletedAtIsNull(UUID ownerStoreId, String barcode);
 
+    // Same scope as the filtered unique index uq_products_owner_barcode_active.
+    boolean existsByOwnerStoreIdAndBarcodeAndDeletedAtIsNull(UUID ownerStoreId, String barcode);
+
+    boolean existsByOwnerStoreIdAndBarcodeAndDeletedAtIsNullAndIdNot(UUID ownerStoreId, String barcode, UUID id);
+
     // Matches name, SKU, barcode, or brand — whichever the client typed into
     // one search box (a cashier might scan-paste a barcode here just as
     // often as type a product name).

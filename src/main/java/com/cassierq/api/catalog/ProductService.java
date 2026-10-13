@@ -79,6 +79,10 @@ public class ProductService {
         if (productRepository.existsByOwnerStoreIdAndSkuIgnoreCase(owner, request.sku())) {
             throw new ConflictException("SKU sudah dipakai");
         }
+        if (request.barcode() != null && !request.barcode().isBlank()
+                && productRepository.existsByOwnerStoreIdAndBarcodeAndDeletedAtIsNull(owner, request.barcode())) {
+            throw new ConflictException("Barcode sudah dipakai produk lain");
+        }
 
         ProductCategory category = catalogScope.category(request.categoryId(), owner);
         Unit baseUnit = catalogScope.unit(request.baseUnitId(), owner);
@@ -138,6 +142,10 @@ public class ProductService {
         if (!product.getSku().equalsIgnoreCase(request.sku())
                 && productRepository.existsByOwnerStoreIdAndSkuIgnoreCase(owner, request.sku())) {
             throw new ConflictException("SKU sudah dipakai");
+        }
+        if (request.barcode() != null && !request.barcode().isBlank()
+                && productRepository.existsByOwnerStoreIdAndBarcodeAndDeletedAtIsNullAndIdNot(owner, request.barcode(), id)) {
+            throw new ConflictException("Barcode sudah dipakai produk lain");
         }
 
         ProductCategory category = catalogScope.category(request.categoryId(), owner);
@@ -272,11 +280,16 @@ public class ProductService {
         productRepository.save(product);
     }
 
+    /** BigDecimal.equals also compares scale (5000 vs 5000.00), so compare by value; null = no cost price. */
+    private static boolean sameAmount(BigDecimal a, BigDecimal b) {
+        return a == null ? b == null : b != null && a.compareTo(b) == 0;
+    }
+
     private void updatePriceIfChanged(Product product, UUID storeId, BigDecimal newSellingPrice, BigDecimal newCostPrice, UUID userId) {
         var current = priceRepository.findByStoreIdAndProductIdAndEffectiveUntilIsNull(storeId, product.getId());
         boolean unchanged = current.isPresent()
                 && current.get().getSellingPrice().compareTo(newSellingPrice) == 0
-                && java.util.Objects.equals(current.get().getCostPrice(), newCostPrice);
+                && sameAmount(current.get().getCostPrice(), newCostPrice);
         if (unchanged) {
             return;
         }
@@ -284,7 +297,11 @@ public class ProductService {
         Instant now = Instant.now();
         current.ifPresent(price -> {
             price.setEffectiveUntil(now);
-            priceRepository.save(price);
+            // Flush the close-out first: Hibernate runs INSERTs before UPDATEs
+            // at flush, so without this the new current price would be inserted
+            // while the old row still has effective_until NULL and trip the
+            // filtered unique index (one current price per store + product).
+            priceRepository.saveAndFlush(price);
         });
 
         priceRepository.save(ProductPrice.builder()
