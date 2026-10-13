@@ -23,7 +23,9 @@ public record OrderResponse(
         String voidReason,
         List<OrderItemResponse> items,
         UUID customerId,
-        BigDecimal debtAmount) {
+        BigDecimal debtAmount,
+        String promoCode,
+        BigDecimal promoDiscountAmount) {
 
     public static OrderResponse from(SalesTransaction transaction, List<OrderItemResponse> items) {
         return from(transaction, items, null, null);
@@ -48,6 +50,8 @@ public record OrderResponse(
                 transaction.getVoidReason(),
                 items,
                 customerId,
-                debtAmount);
+                debtAmount,
+                transaction.getPromoCodeText(),
+                transaction.getPromoDiscountAmount());
     }
 }

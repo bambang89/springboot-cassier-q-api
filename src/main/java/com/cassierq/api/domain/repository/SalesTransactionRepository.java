@@ -12,6 +12,8 @@ import org.springframework.data.jpa.repository.Query;
 
 public interface SalesTransactionRepository extends JpaRepository<SalesTransaction, UUID> {
 
+    boolean existsByPromoCodeId(UUID promoCodeId);
+
     Optional<SalesTransaction> findByIdAndStoreId(UUID id, UUID storeId);
 
     Optional<SalesTransaction> findByStoreIdAndIdempotencyKey(UUID storeId, String idempotencyKey);

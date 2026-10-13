@@ -32,5 +32,10 @@ public record CreateOrderRequest(
         // recorded as a debt for this customer instead of being rejected —
         // see CustomerService.recordDebtForSale. Omit entirely for the
         // original cash/full-payment-only behavior.
-        UUID customerId) {
+        UUID customerId,
+
+        // Optional promo code (V11). The server recomputes its discount and adds it on
+        // top of discountAmount — clients never send the promo amount themselves.
+        @jakarta.validation.constraints.Size(max = 30, message = "Kode promo terlalu panjang")
+        String promoCode) {
 }

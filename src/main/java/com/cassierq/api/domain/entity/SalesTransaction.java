@@ -87,4 +87,15 @@ public class SalesTransaction extends Auditable {
     /** Dikirim HP lewat header Idempotency-Key — retry checkout yang sama tidak membuat transaksi ganda. */
     @Column(name = "idempotency_key", length = 100)
     private String idempotencyKey;
+
+    /** Promo code redeemed on this sale (V11); its discount is included in {@code discountAmount}. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "promo_code_id")
+    private PromoCode promoCode;
+
+    @Column(name = "promo_code", length = 30)
+    private String promoCodeText;
+
+    @Column(name = "promo_discount_amount")
+    private BigDecimal promoDiscountAmount;
 }
