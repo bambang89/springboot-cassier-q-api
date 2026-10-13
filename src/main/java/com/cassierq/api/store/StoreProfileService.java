@@ -25,6 +25,33 @@ public class StoreProfileService {
 
     private final StoreRepository storeRepository;
     private final StoreSettingRepository storeSettingRepository;
+    private final com.cassierq.api.common.storage.FileStorageService fileStorageService;
+
+    static final String LOGO_KEY = "LOGO_URL";
+
+    /** Uploads or replaces the store photo (store head only); the old file is removed after commit. */
+    @Transactional
+    public StoreProfileResponse updateLogo(AppUserPrincipal principal, org.springframework.web.multipart.MultipartFile file) {
+        UUID storeId = requireStore(principal);
+        Store store = storeRepository.findById(storeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Toko tidak ditemukan"));
+        String previous = settingsMap(storeId).get(LOGO_KEY);
+        String folder = "stores/" + com.cassierq.api.common.storage.FileStorageService.slug(store.getStoreCode()) + "/logo";
+        upsertSetting(store, LOGO_KEY, fileStorageService.storeImage(folder, store.getStoreName(), file));
+        fileStorageService.deleteAfterCommit(previous);
+        return StoreProfileResponse.from(store, settingsMap(storeId));
+    }
+
+    /** Removes the store photo. */
+    @Transactional
+    public StoreProfileResponse removeLogo(AppUserPrincipal principal) {
+        UUID storeId = requireStore(principal);
+        Store store = storeRepository.findById(storeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Toko tidak ditemukan"));
+        fileStorageService.deleteAfterCommit(settingsMap(storeId).get(LOGO_KEY));
+        upsertSetting(store, LOGO_KEY, null);
+        return StoreProfileResponse.from(store, settingsMap(storeId));
+    }
 
     @Transactional(readOnly = true)
     public StoreProfileResponse get(AppUserPrincipal principal) {

@@ -39,4 +39,20 @@ public class StoreProfileController {
             @Valid @RequestBody UpdateStoreProfileRequest request) {
         return storeProfileService.update(principal, request);
     }
+
+    @org.springframework.web.bind.annotation.PostMapping(value = "/logo", consumes = "multipart/form-data")
+    @PreAuthorize("hasRole('KEPALA_TOKO')")
+    @Operation(summary = "Upload/ganti foto toko (khusus Kepala Toko, JPG/PNG/WEBP, maks 5MB)")
+    public StoreProfileResponse uploadLogo(
+            @AuthenticationPrincipal AppUserPrincipal principal,
+            @org.springframework.web.bind.annotation.RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
+        return storeProfileService.updateLogo(principal, file);
+    }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/logo")
+    @PreAuthorize("hasRole('KEPALA_TOKO')")
+    @Operation(summary = "Hapus foto toko (khusus Kepala Toko)")
+    public StoreProfileResponse removeLogo(@AuthenticationPrincipal AppUserPrincipal principal) {
+        return storeProfileService.removeLogo(principal);
+    }
 }

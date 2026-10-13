@@ -81,6 +81,7 @@ public class AuthService {
     private final JwtService jwtService;
     private final JwtProperties jwtProperties;
     private final PasswordResetProperties passwordResetProperties;
+    private final com.cassierq.api.common.storage.FileStorageService fileStorageService;
 
     @Transactional
     public AuthResponse register(RegisterRequest request, DeviceContext device) {
@@ -203,6 +204,29 @@ public class AuthService {
         userSessionRepository.revokeAllByUserId(userId);
         refreshTokenRepository.revokeAllByUserId(userId);
         deviceRepository.deleteAllByUserId(userId);
+    }
+
+    /** Uploads or replaces the caller's profile photo; the old file is removed after commit. */
+    @Transactional
+    public UserResponse updateAvatar(UUID userId, org.springframework.web.multipart.MultipartFile file) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User tidak ditemukan"));
+        String previous = user.getAvatarUrl();
+        user.setAvatarUrl(fileStorageService.storeImage("users/" + userId + "/avatar", user.getUsername(), file));
+        userRepository.save(user);
+        fileStorageService.deleteAfterCommit(previous);
+        return me(userId);
+    }
+
+    /** Removes the caller's profile photo. */
+    @Transactional
+    public UserResponse removeAvatar(UUID userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User tidak ditemukan"));
+        fileStorageService.deleteAfterCommit(user.getAvatarUrl());
+        user.setAvatarUrl(null);
+        userRepository.save(user);
+        return me(userId);
     }
 
     @Transactional(readOnly = true)

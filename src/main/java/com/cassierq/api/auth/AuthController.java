@@ -109,6 +109,22 @@ public class AuthController {
         return authService.me(principal.getUserId());
     }
 
+    @PostMapping(value = "/me/avatar", consumes = "multipart/form-data")
+    @PreAuthorize("hasRole('KEPALA_TOKO')")
+    @Operation(summary = "Upload/ganti foto profil (khusus Kepala Toko, JPG/PNG/WEBP, maks 5MB)")
+    public UserResponse uploadAvatar(
+            @AuthenticationPrincipal AppUserPrincipal principal,
+            @org.springframework.web.bind.annotation.RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
+        return authService.updateAvatar(principal.getUserId(), file);
+    }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/me/avatar")
+    @PreAuthorize("hasRole('KEPALA_TOKO')")
+    @Operation(summary = "Hapus foto profil (khusus Kepala Toko)")
+    public UserResponse removeAvatar(@AuthenticationPrincipal AppUserPrincipal principal) {
+        return authService.removeAvatar(principal.getUserId());
+    }
+
     @PostMapping("/change-password")
     @SecurityRequirement(name = "bearerAuth")
     @Operation(summary = "Ganti kata sandi (mengetahui kata sandi saat ini)")

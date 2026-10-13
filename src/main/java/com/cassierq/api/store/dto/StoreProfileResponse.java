@@ -14,7 +14,9 @@ public record StoreProfileResponse(
         String phone,
         String status,
         boolean headOffice,
-        Map<String, String> settings) {
+        Map<String, String> settings,
+        // Store photo/logo (settings LOGO_URL) as a full URL; null when not set.
+        String logoUrl) {
 
     public static StoreProfileResponse from(Store store, Map<String, String> settings) {
         return new StoreProfileResponse(
@@ -27,6 +29,7 @@ public record StoreProfileResponse(
                 store.getPhone(),
                 store.getStatus(),
                 store.isHeadOffice(),
-                settings);
+                settings,
+                com.cassierq.api.common.storage.PublicUrls.resolve(settings.get("LOGO_URL")));
     }
 }

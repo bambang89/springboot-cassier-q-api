@@ -69,4 +69,8 @@ public class User extends Auditable {
 
     @Column(name = "last_login_at")
     private Instant lastLoginAt;
+
+    /** Stored profile photo URL (/uploads/...), V13. */
+    @Column(name = "avatar_url", length = 500)
+    private String avatarUrl;
 }

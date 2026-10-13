@@ -1,5 +1,6 @@
 package com.cassierq.api.auth.dto;
 
+import com.cassierq.api.common.storage.PublicUrls;
 import com.cassierq.api.domain.entity.User;
 import com.cassierq.api.domain.entity.UserRole;
 import java.util.List;
@@ -11,7 +12,8 @@ public record UserResponse(
         String name,
         String email,
         boolean superadmin,
-        List<RoleAssignment> roles) {
+        List<RoleAssignment> roles,
+        String avatarUrl) {
 
     public record RoleAssignment(String roleCode, String roleName, UUID storeId, String storeName) {
     }
@@ -30,6 +32,7 @@ public record UserResponse(
                 user.getEmployee().getFullName(),
                 user.getEmail(),
                 user.isSuperadmin(),
-                roles);
+                roles,
+                PublicUrls.resolve(user.getAvatarUrl()));
     }
 }
