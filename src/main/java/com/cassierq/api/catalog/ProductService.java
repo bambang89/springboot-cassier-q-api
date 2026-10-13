@@ -170,9 +170,11 @@ public class ProductService {
     public ProductResponse uploadPhoto(UUID id, MultipartFile file, AppUserPrincipal principal) {
         Product product = catalogScope.product(id, catalogScope.requireWriter(principal));
 
-        String relativePath = fileStorageService.storeImage("products/" + id, file);
-        product.setImageUrl("/uploads/" + relativePath);
+        String previous = product.getImageUrl();
+        product.setImageUrl(fileStorageService.storeImage(photoFolder(product, "main"), product.getSku(), file));
         productRepository.save(product);
+        // Foto utama lama tidak dirujuk lagi — hapus filenya supaya folder tidak menumpuk.
+        fileStorageService.deleteAfterCommit(previous);
 
         return toResponse(product, principal.getPrimaryStoreId());
     }
@@ -195,11 +197,11 @@ public class ProductService {
             throw new ConflictException("Maksimal " + MAX_PRODUCT_PHOTOS + " foto per produk");
         }
 
-        String relativePath = fileStorageService.storeImage("products/" + productId, file);
+        String imageUrl = fileStorageService.storeImage(photoFolder(product, "gallery"), product.getSku(), file);
 
         ProductImage image = productImageRepository.save(ProductImage.builder()
                 .product(product)
-                .imageUrl("/uploads/" + relativePath)
+                .imageUrl(imageUrl)
                 .sortOrder((int) existingCount)
                 .createdBy(userRepository.getReferenceById(principal.getUserId()))
                 .build());
@@ -214,6 +216,21 @@ public class ProductService {
                 .filter(img -> img.getProduct().getId().equals(productId))
                 .orElseThrow(() -> new ResourceNotFoundException("Foto tidak ditemukan"));
         productImageRepository.delete(image);
+        fileStorageService.deleteAfterCommit(image.getImageUrl());
+    }
+
+    /**
+     * Folder foto produk: stores/{kode-toko}/products/{id-produk}/{kind}, dengan
+     * kind "main" (foto utama) atau "gallery" (foto tambahan). Pakai id produk,
+     * bukan SKU, supaya folder tetap sama walau SKU diganti.
+     */
+    private String photoFolder(Product product, String kind) {
+        String storeCode = storeRepository.findById(product.getOwnerStoreId())
+                .map(Store::getStoreCode)
+                .map(FileStorageService::slug)
+                .filter(code -> !code.isEmpty())
+                .orElse(product.getOwnerStoreId().toString());
+        return "stores/" + storeCode + "/products/" + product.getId() + "/" + kind;
     }
 
     @Transactional(readOnly = true)

@@ -12,8 +12,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     private final UploadProperties uploadProperties;
 
-    // Path relatif yang dikembalikan FileStorageService (mis. "products/{id}/xxx.jpg")
-    // dipetakan persis di sini jadi URL publik /uploads/products/{id}/xxx.jpg.
+    // File di {baseDir}/stores/{kode-toko}/products/{id}/main|gallery/xxx.jpg
+    // (lihat FileStorageService) diserve persis di URL /uploads/stores/... yang sama.
+    // File lama berpola /uploads/products/{id}/xxx.jpg tetap terlayani.
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
         String location = "file:" + Path.of(uploadProperties.baseDir()).toAbsolutePath().normalize() + "/";
