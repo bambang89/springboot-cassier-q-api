@@ -9,4 +9,7 @@ public interface ProductPriceRepository extends JpaRepository<ProductPrice, UUID
 
     // effective_until IS NULL is the DB's definition of "current price" (filtered unique index).
     Optional<ProductPrice> findByStoreIdAndProductIdAndEffectiveUntilIsNull(UUID storeId, UUID productId);
+
+    /** Current prices of every product in a store. */
+    java.util.List<ProductPrice> findByStoreIdAndEffectiveUntilIsNull(UUID storeId);
 }

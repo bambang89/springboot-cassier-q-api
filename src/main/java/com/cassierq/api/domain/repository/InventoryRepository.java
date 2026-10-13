@@ -12,6 +12,11 @@ public interface InventoryRepository extends JpaRepository<Inventory, UUID> {
 
     Optional<Inventory> findByStoreIdAndProductId(UUID storeId, UUID productId);
 
+    /** Stock rows of a store with their (non-deleted) products, for the stock list. */
+    @Query("select i from Inventory i join fetch i.product p join fetch p.baseUnit join fetch p.category "
+            + "where i.store.id = :storeId and p.deletedAt is null")
+    java.util.List<Inventory> listForStore(UUID storeId);
+
     // Pessimistic row lock so two concurrent sales of the same product can't
     // both read the same starting quantity and oversell stock.
     @Lock(LockModeType.PESSIMISTIC_WRITE)
