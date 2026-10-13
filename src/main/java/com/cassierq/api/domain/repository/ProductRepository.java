@@ -1,6 +1,7 @@
 package com.cassierq.api.domain.repository;
 
 import com.cassierq.api.domain.entity.Product;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -10,6 +11,8 @@ import org.springframework.data.jpa.repository.Query;
 
 /** Every lookup is scoped to the catalog owner (root store) — see CatalogScope. */
 public interface ProductRepository extends JpaRepository<Product, UUID> {
+
+    List<Product> findByOwnerStoreIdAndProductTypeAndDeletedAtIsNullOrderByProductNameAsc(UUID ownerStoreId, String productType);
 
     boolean existsByOwnerStoreIdAndSkuIgnoreCase(UUID ownerStoreId, String sku);
 

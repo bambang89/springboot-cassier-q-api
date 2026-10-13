@@ -192,6 +192,9 @@ public class PurchaseOrderService {
 
     private PurchaseOrderItem buildItem(PurchaseOrder po, CreatePurchaseOrderItemRequest request, UUID catalogOwner) {
         Product product = catalogScope.product(request.productId(), catalogOwner);
+        if (product.isBundle()) {
+            throw new BadRequestException("Paket tidak bisa dibeli lewat PO — beli produk isinya");
+        }
         Unit unit = catalogScope.unit(request.unitId(), catalogOwner);
         ProductUnitConversion conversion = conversionRepository.findByProductIdAndUnitId(product.getId(), unit.getId())
                 .orElseThrow(() -> new BadRequestException("Satuan tersebut tidak berlaku untuk produk " + product.getProductName()));

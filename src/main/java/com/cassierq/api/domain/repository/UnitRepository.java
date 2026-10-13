@@ -13,4 +13,6 @@ public interface UnitRepository extends JpaRepository<Unit, UUID> {
     Optional<Unit> findByIdAndOwnerStoreId(UUID id, UUID ownerStoreId);
 
     boolean existsByOwnerStoreIdAndUnitCodeIgnoreCase(UUID ownerStoreId, String unitCode);
+
+    Optional<Unit> findFirstByOwnerStoreIdAndUnitCodeIgnoreCase(UUID ownerStoreId, String unitCode);
 }

@@ -74,4 +74,13 @@ public class Product extends Auditable {
 
     @Column(name = "deleted_at")
     private Instant deletedAt;
+
+    /** SINGLE = regular product with its own stock; BUNDLE = paket whose stock comes from its items (V12). */
+    @Column(name = "product_type", nullable = false, length = 10)
+    @Builder.Default
+    private String productType = "SINGLE";
+
+    public boolean isBundle() {
+        return "BUNDLE".equals(productType);
+    }
 }

@@ -46,6 +46,9 @@ public class InventoryService {
 
         UUID catalogOwner = catalogScope.ownerOf(principal);
         Product product = catalogScope.product(productId, catalogOwner);
+        if (product.isBundle()) {
+            throw new BadRequestException("Stok paket mengikuti stok isinya — restock produk isinya saja");
+        }
         Unit unit = catalogScope.unit(request.unitId(), catalogOwner);
         ProductUnitConversion conversion = conversionRepository.findByProductIdAndUnitId(productId, unit.getId())
                 .orElseThrow(() -> new BadRequestException("Satuan tersebut tidak berlaku untuk produk " + product.getProductName()));
