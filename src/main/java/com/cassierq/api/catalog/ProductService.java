@@ -55,6 +55,8 @@ public class ProductService {
     private final FileStorageService fileStorageService;
     private final ProductImageRepository productImageRepository;
     private final CatalogScope catalogScope;
+    private final com.cassierq.api.catalog.bundle.BundleComposition bundleComposition;
+    private final com.cassierq.api.domain.repository.ProductPriceTierRepository priceTierRepository;
 
     @Transactional(readOnly = true)
     public PageResponse<ProductResponse> search(String search, AppUserPrincipal principal, Pageable pageable) {
@@ -138,6 +140,9 @@ public class ProductService {
         UUID owner = catalogScope.requireWriter(principal);
         UUID storeId = principal.getPrimaryStoreId();
         Product product = catalogScope.product(id, owner);
+        if (product.isBundle()) {
+            throw new BadRequestException("Paket diubah lewat Pengaturan → Paket Bundling (khusus Kepala Toko)");
+        }
 
         if (!product.getSku().equalsIgnoreCase(request.sku())
                 && productRepository.existsByOwnerStoreIdAndSkuIgnoreCase(owner, request.sku())) {
@@ -267,6 +272,9 @@ public class ProductService {
     public ProductUnitResponse registerUnit(UUID productId, RegisterProductUnitRequest request, AppUserPrincipal principal) {
         UUID owner = catalogScope.requireWriter(principal);
         Product product = catalogScope.product(productId, owner);
+        if (product.isBundle()) {
+            throw new BadRequestException("Paket hanya dijual per paket — tidak bisa ditambah satuan lain");
+        }
         Unit unit = catalogScope.unit(request.unitId(), owner);
 
         if (product.getBaseUnit().getId().equals(unit.getId())) {
@@ -291,6 +299,9 @@ public class ProductService {
     @Transactional
     public void delete(UUID id, AppUserPrincipal principal) {
         Product product = catalogScope.product(id, catalogScope.requireWriter(principal));
+        if (product.isBundle() && !com.cassierq.api.security.RolePolicy.isManager(principal)) {
+            throw new BadRequestException("Paket hanya bisa dihapus oleh Kepala Toko");
+        }
         // Soft delete — products may already be referenced by past sales_transaction_items.
         product.setStatus("INACTIVE");
         product.setDeletedAt(Instant.now());
@@ -332,7 +343,8 @@ public class ProductService {
                 .build());
     }
 
-    private ProductResponse toResponse(Product product, UUID storeId) {
+    /** Product as returned by the API; bundles get their items and a stock computed from them. */
+    public ProductResponse toResponse(Product product, UUID storeId) {
         BigDecimal sellingPrice = null;
         BigDecimal costPrice = null;
         var price = priceRepository.findByStoreIdAndProductIdAndEffectiveUntilIsNull(storeId, product.getId());
@@ -340,9 +352,17 @@ public class ProductService {
             sellingPrice = price.get().getSellingPrice();
             costPrice = price.get().getCostPrice();
         }
+        if (product.isBundle()) {
+            return ProductResponse.from(product, sellingPrice, costPrice,
+                    bundleComposition.availableStock(product.getId(), storeId),
+                    bundleComposition.describe(product.getId(), storeId));
+        }
         BigDecimal stock = inventoryRepository.findByStoreIdAndProductId(storeId, product.getId())
                 .map(Inventory::getQuantityBaseUnit)
                 .orElse(null);
-        return ProductResponse.from(product, sellingPrice, costPrice, stock);
+        var tiers = priceTierRepository.findByStoreIdAndProductIdOrderByMinQuantityAsc(storeId, product.getId()).stream()
+                .map(t -> new com.cassierq.api.catalog.dto.PriceTierDto(t.getMinQuantity(), t.getUnitPrice()))
+                .toList();
+        return ProductResponse.from(product, sellingPrice, costPrice, stock, null, tiers);
     }
 }

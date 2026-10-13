@@ -7,6 +7,9 @@ import com.cassierq.api.common.exception.BadRequestException;
 import com.cassierq.api.common.exception.ResourceNotFoundException;
 import com.cassierq.api.config.BusinessProperties;
 import com.cassierq.api.customer.CustomerService;
+import com.cassierq.api.cashier.CashierSessionService;
+import com.cassierq.api.promo.PromoCodeService;
+import com.cassierq.api.settings.CheckoutSettingsService;
 import com.cassierq.api.domain.entity.CashierSession;
 import com.cassierq.api.domain.entity.Customer;
 import com.cassierq.api.domain.entity.CustomerLedgerEntry;
@@ -20,7 +23,6 @@ import com.cassierq.api.domain.entity.StockMovement;
 import com.cassierq.api.domain.entity.Store;
 import com.cassierq.api.domain.entity.Unit;
 import com.cassierq.api.domain.entity.User;
-import com.cassierq.api.domain.repository.CashierSessionRepository;
 import com.cassierq.api.domain.repository.CustomerLedgerEntryRepository;
 import com.cassierq.api.domain.repository.CustomerRepository;
 import com.cassierq.api.domain.repository.InventoryRepository;
@@ -67,7 +69,12 @@ public class OrderService {
     private final ProductUnitConversionRepository conversionRepository;
     private final ProductPriceRepository priceRepository;
     private final InventoryRepository inventoryRepository;
-    private final CashierSessionRepository cashierSessionRepository;
+    private final CashierSessionService cashierSessionService;
+    private final CheckoutSettingsService checkoutSettingsService;
+    private final PromoCodeService promoCodeService;
+    private final com.cassierq.api.catalog.bundle.BundleComposition bundleComposition;
+    private final com.cassierq.api.catalog.pricing.PriceTierService priceTierService;
+    private final com.cassierq.api.access.ActionAccessService actionAccess;
     private final NumberSequenceService numberSequenceService;
     private final SalesTransactionRepository transactionRepository;
     private final SalesTransactionItemRepository itemRepository;
@@ -97,8 +104,11 @@ public class OrderService {
 
         Store store = storeRepository.findById(storeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Toko tidak ditemukan"));
-        CashierSession session = cashierSessionRepository.findByCashierIdAndStatus(principal.getUserId(), "OPEN")
+        CashierSession session = cashierSessionService.findActiveSession(principal.getUserId())
                 .orElseThrow(() -> new BadRequestException("Anda belum membuka sesi kasir"));
+        if (!checkoutSettingsService.enabledPaymentMethods(storeId).contains(request.paymentMethod())) {
+            throw new BadRequestException("Metode pembayaran ini tidak diaktifkan di toko");
+        }
         User cashier = userRepository.getReferenceById(principal.getUserId());
         UUID catalogOwner = catalogScope.ownerOf(principal);
 
@@ -108,7 +118,7 @@ public class OrderService {
         // Kunci baris stok dalam urutan productId yang tetap: dua kasir dengan
         // keranjang [A,B] dan [B,A] tidak saling menunggu (deadlock). Lookup
         // berikutnya di priceAndReserveLine memakai entity yang sudah terkunci.
-        lockInventoryInOrder(storeId, request.items().stream().map(CreateOrderItemRequest::productId).toList());
+        lockInventoryInOrder(storeId, stockProductIds(request.items(), catalogOwner));
 
         List<SalesTransactionItem> items = new ArrayList<>();
         List<StockMovement> movements = new ArrayList<>();
@@ -117,17 +127,36 @@ public class OrderService {
         // SalesTransaction row must exist before items/movements can reference
         // it, but we need the computed totals first — build it once totals
         // are known, right before saving everything together at the end.
+        // Wholesale steps depend on the product's total in this sale, across all its units.
+        Map<UUID, BigDecimal> baseTotals = baseQuantityPerProduct(request.items(), catalogOwner);
         for (CreateOrderItemRequest itemRequest : request.items()) {
-            LineResult line = priceAndReserveLine(storeId, catalogOwner, itemRequest);
+            LineResult line = priceAndReserveLine(storeId, catalogOwner, itemRequest, baseTotals);
             subtotal = subtotal.add(line.subtotal);
             items.add(line.item);
-            movements.add(line.movement);
+            movements.addAll(line.movements);
         }
 
+        // Manual discount and promo codes each need their own permission (Hak Akses Menu → Kasir).
+        if (discountAmount.signum() > 0 && !actionAccess.allowed(principal, "pos.discount")) {
+            throw new BadRequestException("Anda tidak diizinkan memberi diskon manual");
+        }
+        if (request.promoCode() != null && !request.promoCode().isBlank() && !actionAccess.allowed(principal, "pos.promo")) {
+            throw new BadRequestException("Anda tidak diizinkan memakai kode promo");
+        }
+        // The cashier discount limit applies to the manual discount only; a promo code
+        // is approved by the owner, so its discount is added after that check.
         validateDiscount(principal, subtotal, discountAmount);
+        PromoCodeService.Redemption promo = null;
+        if (request.promoCode() != null && !request.promoCode().isBlank()) {
+            promo = promoCodeService.redeem(storeId, request.promoCode(), subtotal.subtract(discountAmount).max(BigDecimal.ZERO));
+            discountAmount = discountAmount.add(promo.discount());
+        }
         BigDecimal afterDiscount = subtotal.subtract(discountAmount);
         if (afterDiscount.compareTo(BigDecimal.ZERO) < 0) {
             throw new BadRequestException("Diskon melebihi total belanja");
+        }
+        if (!checkoutSettingsService.taxEnabled(storeId) && taxAmount.signum() != 0) {
+            throw new BadRequestException("PPN tidak diaktifkan di toko ini");
         }
         validateTax(afterDiscount, taxAmount);
         BigDecimal grandTotal = afterDiscount.add(taxAmount);
@@ -170,6 +199,9 @@ public class OrderService {
                 .changeAmount(changeAmount)
                 .transactionStatus("PAID")
                 .idempotencyKey(idempotencyKey)
+                .promoCode(promo != null ? promo.promo() : null)
+                .promoCodeText(promo != null ? promo.promo().getCode() : null)
+                .promoDiscountAmount(promo != null ? promo.discount() : null)
                 .build());
 
         items.forEach(item -> {
@@ -232,32 +264,41 @@ public class OrderService {
         if (!"PAID".equals(transaction.getTransactionStatus())) {
             throw new BadRequestException("Hanya transaksi berstatus PAID yang bisa dibatalkan");
         }
+        if (transaction.getPromoCode() != null) {
+            // A voided sale gives its promo use back.
+            promoCodeService.release(transaction.getPromoCode().getId());
+        }
 
         User voider = userRepository.getReferenceById(principal.getUserId());
         Instant now = Instant.now();
         List<SalesTransactionItem> items = itemRepository.findByTransactionId(id);
-        lockInventoryInOrder(storeId, items.stream().map(item -> item.getProduct().getId()).toList());
+        // Give back exactly the stock the sale took, as recorded in its SALE movements —
+        // for a bundle these are its items, even if the bundle's contents changed since.
+        List<StockMovement> taken = stockMovementRepository
+                .findByReferenceTypeAndReferenceIdAndMovementType("SALES_TRANSACTION", id, "SALE");
+        lockInventoryInOrder(storeId, taken.stream().map(m -> m.getProduct().getId()).toList());
 
-        for (SalesTransactionItem item : items) {
-            Inventory inventory = inventoryRepository.findForUpdate(storeId, item.getProduct().getId())
+        for (StockMovement sale : taken) {
+            Inventory inventory = inventoryRepository.findForUpdate(storeId, sale.getProduct().getId())
                     .orElseThrow(() -> new ResourceNotFoundException("Stok produk tidak ditemukan"));
             BigDecimal before = inventory.getQuantityBaseUnit();
-            BigDecimal after = before.add(item.getQuantityBaseUnit());
+            BigDecimal after = before.add(sale.getQuantityBaseUnit());
             inventory.setQuantityBaseUnit(after);
             inventory.setUpdatedAt(now);
             inventoryRepository.save(inventory);
 
             stockMovementRepository.save(StockMovement.builder()
                     .store(transaction.getStore())
-                    .product(item.getProduct())
+                    .product(sale.getProduct())
                     .movementType("VOID_TRANSACTION")
-                    .quantity(item.getQuantity())
-                    .unit(item.getUnit())
-                    .quantityBaseUnit(item.getQuantityBaseUnit())
+                    .quantity(sale.getQuantity())
+                    .unit(sale.getUnit())
+                    .quantityBaseUnit(sale.getQuantityBaseUnit())
                     .stockBefore(before)
                     .stockAfter(after)
                     .referenceType("SALES_TRANSACTION")
                     .referenceId(transaction.getId())
+                    .notes(sale.getNotes())
                     .createdBy(voider)
                     .createdAt(now)
                     .build());
@@ -384,7 +425,8 @@ public class OrderService {
         }
     }
 
-    private LineResult priceAndReserveLine(UUID storeId, UUID catalogOwner, CreateOrderItemRequest itemRequest) {
+    private LineResult priceAndReserveLine(
+            UUID storeId, UUID catalogOwner, CreateOrderItemRequest itemRequest, Map<UUID, BigDecimal> baseTotals) {
         Product product = catalogScope.product(itemRequest.productId(), catalogOwner);
         if (!"ACTIVE".equals(product.getStatus())) {
             throw new BadRequestException("Produk " + product.getProductName() + " tidak aktif");
@@ -396,42 +438,46 @@ public class OrderService {
                 .orElseThrow(() -> new BadRequestException("Produk " + product.getProductName() + " belum punya harga di toko ini"));
 
         BigDecimal quantityBaseUnit = itemRequest.quantity().multiply(conversion.getConversionToBase());
-
-        Inventory inventory = inventoryRepository.findForUpdate(storeId, product.getId())
-                .orElseThrow(() -> new BadRequestException("Stok produk " + product.getProductName() + " belum diatur di toko ini"));
-        BigDecimal before = inventory.getQuantityBaseUnit();
-        if (before.compareTo(quantityBaseUnit) < 0) {
-            throw new BadRequestException("Stok " + product.getProductName() + " tidak cukup");
-        }
-        BigDecimal after = before.subtract(quantityBaseUnit);
-        inventory.setQuantityBaseUnit(after);
-        inventory.setUpdatedAt(Instant.now());
-        inventoryRepository.save(inventory);
-
-        BigDecimal lineSubtotal = price.getSellingPrice().multiply(itemRequest.quantity());
+        // Selling price is per base unit: a dus of 12 costs 12 × that price (was charged as 1×),
+        // lowered to the wholesale step the product's total in this sale reaches.
+        BigDecimal basePrice = product.isBundle()
+                ? price.getSellingPrice()
+                : priceTierService.basePriceFor(storeId, product.getId(),
+                        baseTotals.getOrDefault(product.getId(), quantityBaseUnit), price.getSellingPrice());
+        BigDecimal unitPrice = basePrice.multiply(conversion.getConversionToBase());
+        BigDecimal lineSubtotal = unitPrice.multiply(itemRequest.quantity());
 
         SalesTransactionItem item = SalesTransactionItem.builder()
                 .product(product)
                 .quantity(itemRequest.quantity())
                 .unit(unit)
                 .quantityBaseUnit(quantityBaseUnit)
-                .unitPrice(price.getSellingPrice())
+                .unitPrice(unitPrice)
                 .discount(BigDecimal.ZERO)
                 .subtotal(lineSubtotal)
                 .build();
 
-        StockMovement movement = StockMovement.builder()
-                .store(inventory.getStore())
-                .product(product)
-                .movementType("SALE")
-                .quantity(itemRequest.quantity())
-                .unit(unit)
-                .quantityBaseUnit(quantityBaseUnit)
-                .stockBefore(before)
-                .stockAfter(after)
-                .build();
+        List<StockMovement> movements = new ArrayList<>();
+        if (product.isBundle()) {
+            // A bundle has no stock of its own: take each item's share from that item's stock.
+            var bundleItems = bundleComposition.items(product.getId());
+            if (bundleItems.isEmpty()) {
+                throw new BadRequestException("Paket " + product.getProductName() + " belum punya isi");
+            }
+            for (var bundleItem : bundleItems) {
+                Product component = bundleItem.getComponent();
+                if (!"ACTIVE".equals(component.getStatus()) || component.getDeletedAt() != null) {
+                    throw new BadRequestException("Isi paket " + component.getProductName() + " sudah tidak aktif");
+                }
+                BigDecimal componentBase = bundleComposition.baseQuantityPerBundle(bundleItem).multiply(quantityBaseUnit);
+                movements.add(takeStock(storeId, component, bundleItem.getQuantity().multiply(quantityBaseUnit),
+                        bundleItem.getUnit(), componentBase, "Paket " + product.getProductName()));
+            }
+        } else {
+            movements.add(takeStock(storeId, product, itemRequest.quantity(), unit, quantityBaseUnit, null));
+        }
 
-        return new LineResult(item, movement, lineSubtotal);
+        return new LineResult(item, movements, lineSubtotal);
     }
 
     private OrderResponse toResponse(SalesTransaction transaction, List<SalesTransactionItem> items) {
@@ -446,6 +492,57 @@ public class OrderService {
         return storeId;
     }
 
-    private record LineResult(SalesTransactionItem item, StockMovement movement, BigDecimal subtotal) {
+    /** Deducts stock for a sale and returns the SALE movement (reference is set once the sale is saved). */
+    private StockMovement takeStock(UUID storeId, Product product, BigDecimal quantity, Unit unit,
+            BigDecimal quantityBaseUnit, String notes) {
+        Inventory inventory = inventoryRepository.findForUpdate(storeId, product.getId())
+                .orElseThrow(() -> new BadRequestException("Stok produk " + product.getProductName() + " belum diatur di toko ini"));
+        BigDecimal before = inventory.getQuantityBaseUnit();
+        if (before.compareTo(quantityBaseUnit) < 0) {
+            throw new BadRequestException("Stok " + product.getProductName() + " tidak cukup");
+        }
+        BigDecimal after = before.subtract(quantityBaseUnit);
+        inventory.setQuantityBaseUnit(after);
+        inventory.setUpdatedAt(Instant.now());
+        inventoryRepository.save(inventory);
+
+        return StockMovement.builder()
+                .store(inventory.getStore())
+                .product(product)
+                .movementType("SALE")
+                .quantity(quantity)
+                .unit(unit)
+                .quantityBaseUnit(quantityBaseUnit)
+                .stockBefore(before)
+                .stockAfter(after)
+                .notes(notes)
+                .build();
+    }
+
+    /** Total base-unit quantity of each (non-bundle) product across all lines of a sale. */
+    private Map<UUID, BigDecimal> baseQuantityPerProduct(List<CreateOrderItemRequest> lines, UUID catalogOwner) {
+        Map<UUID, BigDecimal> totals = new java.util.HashMap<>();
+        for (CreateOrderItemRequest line : lines) {
+            conversionRepository.findByProductIdAndUnitId(line.productId(), line.unitId()).ifPresent(conversion ->
+                    totals.merge(line.productId(), line.quantity().multiply(conversion.getConversionToBase()), BigDecimal::add));
+        }
+        return totals;
+    }
+
+    /** Products whose stock a sale touches: the product itself, or every item of a bundle. */
+    private List<UUID> stockProductIds(List<CreateOrderItemRequest> lines, UUID catalogOwner) {
+        List<UUID> ids = new ArrayList<>();
+        for (CreateOrderItemRequest line : lines) {
+            Product product = catalogScope.product(line.productId(), catalogOwner);
+            if (product.isBundle()) {
+                bundleComposition.items(product.getId()).forEach(item -> ids.add(item.getComponent().getId()));
+            } else {
+                ids.add(product.getId());
+            }
+        }
+        return ids;
+    }
+
+    private record LineResult(SalesTransactionItem item, List<StockMovement> movements, BigDecimal subtotal) {
     }
 }

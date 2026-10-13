@@ -40,6 +40,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class ProductController {
 
     private final ProductService productService;
+    private final com.cassierq.api.catalog.pricing.PriceTierService priceTierService;
 
     @GetMapping
     @Operation(summary = "Daftar produk (paginated), harga & stok mengikuti toko user")
@@ -73,7 +74,7 @@ public class ProductController {
     }
 
     @PostMapping("/{id}/units")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
+    @PreAuthorize("@actionAccess.allowed(principal, 'products.update')")
     @Operation(summary = "Daftarkan satuan alternatif + rasio konversinya untuk produk ini (pasangan tulis dari /convert)")
     public ResponseEntity<ProductUnitResponse> registerUnit(
             @AuthenticationPrincipal AppUserPrincipal principal,
@@ -83,7 +84,7 @@ public class ProductController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
+    @PreAuthorize("@actionAccess.allowed(principal, 'products.create')")
     @Operation(summary = "Buat produk baru (sekaligus harga & stok awal di toko user)")
     public ResponseEntity<ProductResponse> create(
             @AuthenticationPrincipal AppUserPrincipal principal,
@@ -92,7 +93,7 @@ public class ProductController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
+    @PreAuthorize("@actionAccess.allowed(principal, 'products.update')")
     @Operation(summary = "Perbarui produk (harga baru otomatis menutup harga lama)")
     public ProductResponse update(
             @AuthenticationPrincipal AppUserPrincipal principal,
@@ -102,7 +103,7 @@ public class ProductController {
     }
 
     @PostMapping(value = "/{id}/photo", consumes = "multipart/form-data")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
+    @PreAuthorize("@actionAccess.allowed(principal, 'products.update')")
     @Operation(summary = "Upload/ganti foto produk (JPG/PNG/WEBP, maks 5MB)")
     public ProductResponse uploadPhoto(
             @AuthenticationPrincipal AppUserPrincipal principal,
@@ -118,7 +119,7 @@ public class ProductController {
     }
 
     @PostMapping(value = "/{id}/photos", consumes = "multipart/form-data")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
+    @PreAuthorize("@actionAccess.allowed(principal, 'products.update')")
     @Operation(summary = "Tambah foto ke galeri produk (JPG/PNG/WEBP, maks 5MB)")
     public ResponseEntity<ProductImageResponse> addPhoto(
             @AuthenticationPrincipal AppUserPrincipal principal,
@@ -128,7 +129,7 @@ public class ProductController {
     }
 
     @DeleteMapping("/{id}/photos/{photoId}")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
+    @PreAuthorize("@actionAccess.allowed(principal, 'products.update')")
     @Operation(summary = "Hapus salah satu foto galeri produk")
     public ResponseEntity<Void> deletePhoto(
             @AuthenticationPrincipal AppUserPrincipal principal,
@@ -139,10 +140,27 @@ public class ProductController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
+    @PreAuthorize("@actionAccess.allowed(principal, 'products.delete')")
     @Operation(summary = "Nonaktifkan produk (soft delete)")
     public ResponseEntity<Void> delete(@AuthenticationPrincipal AppUserPrincipal principal, @PathVariable UUID id) {
         productService.delete(id, principal);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{id}/price-tiers")
+    @Operation(summary = "Harga grosir bertingkat produk di toko ini")
+    public java.util.List<com.cassierq.api.catalog.dto.PriceTierDto> priceTiers(
+            @AuthenticationPrincipal AppUserPrincipal principal, @PathVariable UUID id) {
+        return priceTierService.tiers(principal.getPrimaryStoreId(), id);
+    }
+
+    @org.springframework.web.bind.annotation.PutMapping("/{id}/price-tiers")
+    @PreAuthorize("@actionAccess.allowed(principal, 'products.price_tiers')")
+    @Operation(summary = "Atur harga grosir bertingkat (ganti semua tingkat; daftar kosong = tanpa harga grosir)")
+    public java.util.List<com.cassierq.api.catalog.dto.PriceTierDto> replacePriceTiers(
+            @AuthenticationPrincipal AppUserPrincipal principal,
+            @PathVariable UUID id,
+            @Valid @RequestBody com.cassierq.api.catalog.dto.UpdatePriceTiersRequest request) {
+        return priceTierService.replace(id, request.tiers(), principal);
     }
 }
