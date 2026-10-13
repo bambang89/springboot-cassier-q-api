@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/store/menu-access")
 @RequiredArgsConstructor
 @SecurityRequirement(name = "bearerAuth")
-@Tag(name = "Menu Access", description = "Hak tampilan menu per role (diatur Kepala Toko)")
+@Tag(name = "Menu Access", description = "Hak akses menu & aksi per role — hanya bisa diatur Kepala Toko")
 public class MenuAccessController {
 
     private final MenuAccessService menuAccessService;
@@ -34,19 +34,19 @@ public class MenuAccessController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO')")
+    @PreAuthorize("hasRole('KEPALA_TOKO')")
     @Operation(summary = "Matriks role → menu untuk toko ini")
     public MenuAccessResponse get(@AuthenticationPrincipal AppUserPrincipal principal) {
         return menuAccessService.get(principal);
     }
 
     @PutMapping("/{roleCode}")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO')")
+    @PreAuthorize("hasRole('KEPALA_TOKO')")
     @Operation(summary = "Atur menu yang boleh tampil untuk satu role staf (PRODUCT, GUDANG, KASIR)")
     public MenuAccessResponse update(
             @AuthenticationPrincipal AppUserPrincipal principal,
             @PathVariable String roleCode,
             @Valid @RequestBody UpdateMenuAccessRequest request) {
-        return menuAccessService.update(principal, roleCode, request.menus());
+        return menuAccessService.update(principal, roleCode, request.menus(), request.actions());
     }
 }

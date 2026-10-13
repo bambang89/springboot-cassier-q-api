@@ -39,7 +39,7 @@ public class UnitController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
+    @PreAuthorize("@actionAccess.allowed(principal, 'units.create')")
     @Operation(summary = "Buat satuan baru")
     public ResponseEntity<UnitResponse> create(
             @AuthenticationPrincipal AppUserPrincipal principal,
@@ -48,7 +48,7 @@ public class UnitController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
+    @PreAuthorize("@actionAccess.allowed(principal, 'units.update')")
     @Operation(summary = "Perbarui satuan")
     public UnitResponse update(
             @AuthenticationPrincipal AppUserPrincipal principal,
@@ -58,7 +58,7 @@ public class UnitController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
+    @PreAuthorize("@actionAccess.allowed(principal, 'units.delete')")
     @Operation(summary = "Hapus satuan (gagal 409 jika masih dipakai produk)")
     public ResponseEntity<Void> delete(@AuthenticationPrincipal AppUserPrincipal principal, @PathVariable UUID id) {
         unitService.delete(principal, id);

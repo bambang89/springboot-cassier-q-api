@@ -48,18 +48,26 @@ public class MenuAccessService {
 
     private final StoreSettingRepository storeSettingRepository;
     private final StoreRepository storeRepository;
+    private final ActionAccessService actionAccessService;
 
     /** Matriks lengkap role → menu untuk layar pengaturan KEPALA_TOKO. */
     @Transactional(readOnly = true)
     public MenuAccessResponse get(AppUserPrincipal principal) {
         UUID storeId = requireStore(principal);
         Map<String, List<String>> roles = new LinkedHashMap<>();
-        RolePolicy.STAFF_ROLES.forEach(role -> roles.put(role, menusFor(storeId, role)));
-        return new MenuAccessResponse(MENUS, roles);
+        Map<String, List<String>> roleActions = new LinkedHashMap<>();
+        RolePolicy.STAFF_ROLES.forEach(role -> {
+            roles.put(role, menusFor(storeId, role));
+            roleActions.put(role, actionAccessService.actionsFor(storeId, role));
+        });
+        Map<String, List<MenuAccessResponse.ActionDef>> actions = new LinkedHashMap<>();
+        ActionAccessService.ACTIONS.forEach((menu, defs) -> actions.put(menu,
+                defs.entrySet().stream().map(e -> new MenuAccessResponse.ActionDef(e.getKey(), e.getValue())).toList()));
+        return new MenuAccessResponse(MENUS, roles, actions, roleActions);
     }
 
     @Transactional
-    public MenuAccessResponse update(AppUserPrincipal principal, String roleCode, List<String> menus) {
+    public MenuAccessResponse update(AppUserPrincipal principal, String roleCode, List<String> menus, List<String> actions) {
         UUID storeId = requireStore(principal);
         String role = roleCode.trim().toUpperCase();
         if (!RolePolicy.STAFF_ROLES.contains(role)) {
@@ -81,6 +89,23 @@ public class MenuAccessService {
                 .orElseGet(() -> StoreSetting.builder().store(storeRepository.getReferenceById(storeId)).settingKey(key).build());
         setting.setSettingValue(value);
         storeSettingRepository.save(setting);
+
+        // Actions only make sense inside a visible menu: drop those of hidden menus.
+        List<String> requested = actions != null ? actions : actionAccessService.actionsFor(storeId, role);
+        Set<String> allowedActions = new LinkedHashSet<>();
+        for (String action : requested) {
+            if (!ActionAccessService.isKnown(action)) {
+                throw new BadRequestException("Aksi tidak dikenal: " + action);
+            }
+            if (cleaned.contains(action.substring(0, action.indexOf('.')))) {
+                allowedActions.add(action);
+            }
+        }
+        String actionKey = ActionAccessService.KEY_PREFIX + role;
+        StoreSetting actionSetting = storeSettingRepository.findByStoreIdAndSettingKey(storeId, actionKey)
+                .orElseGet(() -> StoreSetting.builder().store(storeRepository.getReferenceById(storeId)).settingKey(actionKey).build());
+        actionSetting.setSettingValue(ActionAccessService.toStored(allowedActions));
+        storeSettingRepository.save(actionSetting);
         return get(principal);
     }
 
@@ -88,7 +113,7 @@ public class MenuAccessService {
     @Transactional(readOnly = true)
     public MyMenuAccessResponse mine(AppUserPrincipal principal) {
         if (RolePolicy.isManager(principal)) {
-            return new MyMenuAccessResponse(false, MENUS);
+            return new MyMenuAccessResponse(false, MENUS, ActionAccessService.allActions());
         }
         UUID storeId = principal.getPrimaryStoreId();
         Set<String> allowed = new LinkedHashSet<>();
@@ -99,7 +124,8 @@ public class MenuAccessService {
             }
         }
         allowed.add(ALWAYS_VISIBLE);
-        return new MyMenuAccessResponse(true, MENUS.stream().filter(allowed::contains).toList());
+        return new MyMenuAccessResponse(true, MENUS.stream().filter(allowed::contains).toList(),
+                ActionAccessService.ordered(actionAccessService.staffActions(principal)));
     }
 
     private List<String> menusFor(UUID storeId, String role) {

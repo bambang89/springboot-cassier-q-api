@@ -49,8 +49,9 @@ public class CatalogScope {
     }
 
     /**
-     * SUPERADMIN dan PRODUCT boleh mengubah katalog; KEPALA_TOKO hanya kalau
-     * tokonya sendiri pemilik katalog (toko induk) — kepala cabang tidak boleh
+     * SUPERADMIN dan PRODUCT boleh mengubah katalog. Role lain (KEPALA_TOKO, atau
+     * staf yang diberi izin aksi lewat Hak Akses Menu — dicek di endpoint) hanya
+     * kalau tokonya sendiri pemilik katalog (toko induk): cabang tidak boleh
      * mengubah katalog yang dipakai bersama cabang lain.
      */
     public UUID requireWriter(AppUserPrincipal principal) {
@@ -58,7 +59,7 @@ public class CatalogScope {
         if (principal.isSuperadminUser() || principal.hasRole("PRODUCT")) {
             return owner;
         }
-        if (principal.hasRole("KEPALA_TOKO") && owner.equals(principal.getPrimaryStoreId())) {
+        if (owner.equals(principal.getPrimaryStoreId())) {
             return owner;
         }
         throw new AccessDeniedException("Katalog hanya bisa diubah oleh toko induk");

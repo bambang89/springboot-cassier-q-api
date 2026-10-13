@@ -39,7 +39,7 @@ public class CategoryController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
+    @PreAuthorize("@actionAccess.allowed(principal, 'categories.create')")
     @Operation(summary = "Buat kategori baru")
     public ResponseEntity<CategoryResponse> create(
             @AuthenticationPrincipal AppUserPrincipal principal,
@@ -48,7 +48,7 @@ public class CategoryController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
+    @PreAuthorize("@actionAccess.allowed(principal, 'categories.update')")
     @Operation(summary = "Perbarui kategori")
     public CategoryResponse update(
             @AuthenticationPrincipal AppUserPrincipal principal,
@@ -58,7 +58,7 @@ public class CategoryController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'PRODUCT')")
+    @PreAuthorize("@actionAccess.allowed(principal, 'categories.delete')")
     @Operation(summary = "Hapus kategori")
     public ResponseEntity<Void> delete(@AuthenticationPrincipal AppUserPrincipal principal, @PathVariable UUID id) {
         categoryService.delete(principal, id);

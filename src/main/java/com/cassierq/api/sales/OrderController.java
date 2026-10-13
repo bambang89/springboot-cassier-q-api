@@ -39,6 +39,7 @@ public class OrderController {
     private final OrderService orderService;
 
     @PostMapping
+    @PreAuthorize("@actionAccess.allowed(principal, 'pos.create')")
     @Operation(summary = "Catat transaksi penjualan baru (mendekremen stok dalam transaksi yang sama). "
             + "Kirim header Idempotency-Key yang sama saat retry supaya tidak tercatat dua kali.")
     public ResponseEntity<OrderResponse> create(
@@ -82,7 +83,7 @@ public class OrderController {
     }
 
     @PostMapping("/{id}/void")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO')")
+    @PreAuthorize("@actionAccess.allowed(principal, 'orders.void')")
     @Operation(summary = "Batalkan transaksi PAID (restock item, refund payment, batalkan utang pelanggan, status jadi VOID)")
     public OrderResponse voidOrder(
             @AuthenticationPrincipal AppUserPrincipal principal,

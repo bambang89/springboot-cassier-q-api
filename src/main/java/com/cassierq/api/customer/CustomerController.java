@@ -36,6 +36,7 @@ public class CustomerController {
     private final UserRepository userRepository;
 
     @PostMapping
+    @PreAuthorize("@actionAccess.allowed(principal, 'customers.create')")
     @Operation(summary = "Daftarkan pelanggan baru")
     public ResponseEntity<CustomerResponse> create(
             @AuthenticationPrincipal AppUserPrincipal principal,
@@ -56,7 +57,7 @@ public class CustomerController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO')")
+    @PreAuthorize("@actionAccess.allowed(principal, 'customers.update')")
     @Operation(summary = "Perbarui data pelanggan (termasuk limit kredit)")
     public CustomerResponse update(
             @AuthenticationPrincipal AppUserPrincipal principal,
@@ -72,6 +73,7 @@ public class CustomerController {
     }
 
     @PostMapping("/{id}/payments")
+    @PreAuthorize("@actionAccess.allowed(principal, 'customers.payment')")
     @Operation(summary = "Catat pelanggan membayar sebagian/seluruh hutangnya")
     public CustomerResponse recordPayment(
             @AuthenticationPrincipal AppUserPrincipal principal,

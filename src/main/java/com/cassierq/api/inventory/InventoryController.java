@@ -27,7 +27,7 @@ public class InventoryController {
     private final InventoryService inventoryService;
 
     @PostMapping("/restock")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'GUDANG')")
+    @PreAuthorize("@actionAccess.allowed(principal, 'inventory.restock')")
     @Operation(summary = "Tambah stok produk secara manual di toko user yang sedang login")
     public StockResponse restock(
             @AuthenticationPrincipal AppUserPrincipal principal,

@@ -39,7 +39,7 @@ public class SupplierController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'GUDANG')")
+    @PreAuthorize("@actionAccess.allowed(principal, 'suppliers.create')")
     @Operation(summary = "Tambah supplier baru")
     public ResponseEntity<SupplierResponse> create(
             @AuthenticationPrincipal AppUserPrincipal principal,
@@ -48,7 +48,7 @@ public class SupplierController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'GUDANG')")
+    @PreAuthorize("@actionAccess.allowed(principal, 'suppliers.update')")
     @Operation(summary = "Perbarui data supplier")
     public SupplierResponse update(
             @AuthenticationPrincipal AppUserPrincipal principal,
@@ -58,7 +58,7 @@ public class SupplierController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'GUDANG')")
+    @PreAuthorize("@actionAccess.allowed(principal, 'suppliers.delete')")
     @Operation(summary = "Nonaktifkan supplier")
     public ResponseEntity<Void> deactivate(@AuthenticationPrincipal AppUserPrincipal principal, @PathVariable UUID id) {
         supplierService.deactivate(principal, id);

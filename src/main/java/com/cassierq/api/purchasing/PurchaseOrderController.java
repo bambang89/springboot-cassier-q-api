@@ -27,13 +27,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/purchase-orders")
 @RequiredArgsConstructor
 @SecurityRequirement(name = "bearerAuth")
-@PreAuthorize("hasAnyRole('SUPERADMIN', 'KEPALA_TOKO', 'GUDANG')")
+// Viewing needs any purchase-order action; each change needs its own (see methods).
+@PreAuthorize("@actionAccess.allowedAny(principal, 'purchase_orders')")
 @Tag(name = "Purchase Orders", description = "Pemesanan barang ke supplier + penerimaan barang (stok masuk resmi)")
 public class PurchaseOrderController {
 
     private final PurchaseOrderService purchaseOrderService;
 
     @PostMapping
+    @PreAuthorize("@actionAccess.allowed(principal, 'purchase_orders.create')")
     @Operation(summary = "Buat purchase order baru (status langsung ORDERED)")
     public ResponseEntity<PurchaseOrderResponse> create(
             @AuthenticationPrincipal AppUserPrincipal principal,
@@ -54,6 +56,7 @@ public class PurchaseOrderController {
     }
 
     @PostMapping("/{id}/receive")
+    @PreAuthorize("@actionAccess.allowed(principal, 'purchase_orders.receive')")
     @Operation(summary = "Terima barang (boleh sebagian) — menambah stok & mencatat stock_movements PURCHASE")
     public PurchaseOrderResponse receive(
             @AuthenticationPrincipal AppUserPrincipal principal,
@@ -63,6 +66,7 @@ public class PurchaseOrderController {
     }
 
     @PostMapping("/{id}/cancel")
+    @PreAuthorize("@actionAccess.allowed(principal, 'purchase_orders.cancel')")
     @Operation(summary = "Batalkan PO (hanya jika belum ada barang diterima)")
     public PurchaseOrderResponse cancel(@AuthenticationPrincipal AppUserPrincipal principal, @PathVariable UUID id) {
         return purchaseOrderService.cancel(id, principal);
